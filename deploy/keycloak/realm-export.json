@@ -7,18 +7,7 @@
   "duplicateEmailsAllowed": false,
   "resetPasswordAllowed": false,
   "editUsernameAllowed": false,
-  "defaultRoles": ["default-roles-agentdox"],
-  "roles": {
-    "realm": [
-      {
-        "name": "default-roles-agentdox",
-        "description": "${role_default-roles}",
-        "composite": true,
-        "composites": { "realm": ["offline_access", "uma_authorization"] }
-      }
-    ],
-    "client": {}
-  },
+  "bruteForceProtected": false,
   "clientScopes": [
     {
       "name": "agentdox",
@@ -57,8 +46,8 @@
       "protocol": "openid-connect",
       "redirectUris": ["http://localhost:3003/*", "http://localhost:5173/*", "http://dox.localhost/*", "http://localhost/*"],
       "webOrigins": ["+"],
-      "defaultClientScopes": ["web-origins", "agentdox", "acr", "roles", "profile", "email"],
-      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
+      "defaultClientScopes": ["agentdox"],
+      "optionalClientScopes": []
     },
     {
       "clientId": "agentdox-server",
@@ -71,8 +60,8 @@
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": true,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["web-origins", "agentdox", "acr", "roles", "profile", "email"],
-      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
+      "defaultClientScopes": ["agentdox"],
+      "optionalClientScopes": []
     }
   ],
   "users": [
@@ -85,8 +74,7 @@
       "attributes": {
         "agentdox.scopes": ["demo:write ashlands:read"]
       },
-      "credentials": [{ "type": "password", "value": "demo123", "temporary": false }],
-      "realmRoles": ["default-roles-agentdox"]
+      "credentials": [{ "type": "password", "value": "demo123", "temporary": false }]
     }
   ]
 }
