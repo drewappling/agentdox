@@ -142,6 +142,14 @@ srv = ensure_client("agentdox-server", {
     "protocol": "openid-connect"})
 print("[setup] clients:", web["clientId"], "(", web["id"], "),", srv["clientId"])
 
+# Assign the `agentdox` client scope as an OPTIONAL scope on both clients, otherwise
+# Keycloak rejects `scope=... agentdox` in auth/token requests (invalid_scope).
+for cid, cname in ((web["id"], "agentdox-web"), (srv["id"], "agentdox-server")):
+    _, opt = req("GET", A + f"/clients/{cid}/optional-client-scopes", token=TOK)
+    if not (isinstance(opt, list) and any(o.get("id") == scope["id"] for o in opt)):
+        req("PUT", A + f"/clients/{cid}/optional-client-scopes/{scope['id']}", token=TOK, expect=(204,))
+        print(f"[setup] assigned optional scope agentdox -> {cname}")
+
 # service-account scopes (retry: SA user is created lazily for a fresh client)
 sa = None
 st = None
