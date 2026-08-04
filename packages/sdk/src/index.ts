@@ -21,7 +21,14 @@ export class AgentDoxClient {
   constructor(
     readonly baseUrl: string = 'http://localhost:3003',
     private readonly fetchImpl: typeof fetch = fetch,
+    /** Optional bearer token (OIDC access token or PAT). Sent as `Authorization: Bearer …`. */
+    private readonly authToken?: string,
   ) {}
+
+  /** Return a copy of the client bound to a different bearer token. */
+  withToken(authToken: string): AgentDoxClient {
+    return new AgentDoxClient(this.baseUrl, this.fetchImpl, authToken);
+  }
 
   private async request<T>(method: string, path: string, body?: unknown, query?: Record<string, string | undefined>): Promise<T> {
     const qs = query
@@ -30,9 +37,12 @@ export class AgentDoxClient {
           .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v as string)}`)
           .join('&')
       : '';
+    const headers: Record<string, string> = {};
+    if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
     const res = await this.fetchImpl(`${this.baseUrl}${path}${qs}`, {
       method,
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
