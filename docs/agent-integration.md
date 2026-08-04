@@ -52,11 +52,13 @@ Project-scoped `.mcp.json` at repo root (git-tracked, shared):
 }
 ```
 
-> **Shared store with the Docker stack:** the MCP server and the REST server both read
-> `AGENTDOX_DB`. When agentdox runs in Docker, its data lives in a mounted volume — point the
-> MCP `AGENTDOX_DB` at the same host path you mount (`./data:/app/data`), or run the REST
-> server on the host (`npm run dev:server`) so both use the host DB. (An HTTP MCP transport is
-> the future path that removes this entirely.)
+> **Shared store with the Docker stack:** Do **not** bind-mount the SQLite file onto the host and
+> open it from two OSes — Windows host writers + Linux container writers on one WAL file over
+> Docker Desktop's bind mount **corrupts the DB**. Keep the server's DB in its (isolated) volume
+> and, for now, let a local agent MCP use its **own** host file — separate stores, no corruption.
+> True sharing between agents and the Docker web UI comes from an **HTTP MCP transport** (agent →
+> REST API), which is the planned path. If you run the REST server on the host instead, the host
+> MCP can share that one file safely (same OS).
 
 ## CLAUDE.md snippet (drop into the agent's project-root memory file)
 
