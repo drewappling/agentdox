@@ -5,7 +5,7 @@ for local testing on Docker Desktop, and as the GitOps target for your NAS.
 
 ```
 agentdox            REST API   (auth: OIDC + PAT, scope RBAC)
-keycloak            OIDC IdP   (realm `agentdox` auto-imported on first start)
+keycloak            OIDC IdP   (realm `agentdox` bootstrapped via deploy/scripts/setup_keycloak.py)
 caddy (optional)    ingress    (production/NAS only — TLS + public hostnames)
 ```
 
@@ -31,34 +31,43 @@ curl -s http://localhost:3003/health
 # -> {"ok":true,"service":"agentdox","auth":true,"db":"/app/data/agentdox.db"}
 ```
 
-> Realm import: the first Keycloak boot imports `deploy/keycloak/realm-export.json`,
-> which creates client `agentdox-web`, client `agentdox-server` (secret
-> `agentdox-server-dev-secret`), and demo user `drew / demo123` carrying the claim
-> `agentdox:scopes = "demo:write ashlands:read"`.
+> After the stack is healthy, **bootstrap the realm** (creates client `agentdox-web`,
+> client `agentdox-server` with secret `agentdox-server-dev-secret`, and demo user
+> `drew / demo123` carrying `agentdox:scopes = "demo:write ashlands:read"`):
+>
+> ```bash
+> KEYCLOAK_ADMIN=admin KEYCLOAK_ADMIN_PASSWORD=admin \
+>   BASE_URL=http://localhost:8080 python deploy/scripts/setup_keycloak.py
+> ```
+>
+> `realm-export.json` is kept as a reference only; the API script is the source of truth
+> (it handles the Keycloak 26 gotchas below).
 
-### Test A — real OIDC token through agentdox (client credentials)
+### Test A — real user OIDC token through agentdox (password grant)
 
-This validates a **real Keycloak-signed JWT** against the API's JWKS validation + scope RBAC.
-Use the machine (client-credentials) flow with the service account's scopes. Must run
-**inside the compose network** so the token `iss` matches the agentdox issuer
+This validates a **real Keycloak user JWT** against the API's JWKS validation + scope RBAC.
+Must run **inside the compose network** so the token `iss` matches the agentdox issuer
 (`http://keycloak:8080/realms/agentdox`, not `localhost`):
 
 ```bash
 docker cp deploy/oidc-smoke.mjs agentdox-server:/tmp/oidc-smoke.mjs
 docker exec agentdox-server node /tmp/oidc-smoke.mjs
-# token iss = http://keycloak:8080/realms/agentdox, agentdox:scopes = "demo:write ashlands:read"
+# user token iss = http://keycloak:8080/realms/agentdox, agentdox:scopes = "demo:write ashlands:read"
 # GET /memory?category=demo   -> 200 (write grant)
 # POST /memory category=ashlands -> 403 (read-only)
+# POST /context/assemble scope=demo -> 200
 # GET /memory (no token)      -> 401
 ```
 
-> **Note (known quirk):** User **password grant** currently fails in the imported realm with
-> `invalid_grant: "Account is not fully set up"` (`error=resolve_required_actions`,
-> `userId=null`) for every user/client, even though users are enabled/verified with no
-> required actions and `admin-cli` (master) works. Client-credentials works fine. The service
-> account's scopes are set via the setup script. This password-grant issue is a realm-level
-> Keycloak quirk still to be resolved (likely a direct-grant/realm recreation) before the
-> web-UI human login can use it.
+> **Getting the realm right (Keycloak 26 gotchas, all handled by `setup_keycloak.py`):**
+> 1. **Users need `firstName`/`lastName`** — a user with no name gets an `UPDATE_PROFILE`
+>    required action, so the non-interactive direct-grant fails with
+>    `invalid_grant: "Account is not fully set up"`.
+> 2. **Custom attributes must be declared in the user profile** — Keycloak 26 drops
+>    undeclared custom attributes (even with `unmanagedAttributePolicy=ENABLED`), so
+>    `agentdox.scopes` is declared in `users/profile` before it's set on the user.
+> 3. Custom claim is emitted via a `oidc-usermodel-attribute-mapper` on the client
+>    (`link(admin/realms/agentdox)` → client → mappers → `agentdox-scopes`).
 
 ### Test B — Personal Access Tokens (no IdP needed)
 

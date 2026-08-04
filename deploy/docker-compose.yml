@@ -48,7 +48,9 @@ services:
     image: quay.io/keycloak/keycloak:26.0
     container_name: agentdox-keycloak
     restart: unless-stopped
-    command: ["start-dev", "--import-realm"]
+    # Realm is configured imperatively via deploy/scripts/setup_keycloak.py (robust + idempotent),
+    # not the JSON import (which left the direct-grant flow in a broken state).
+    command: ["start-dev"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_ADMIN:-admin}"
       KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in deploy/.env}"
