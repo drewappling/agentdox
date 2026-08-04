@@ -13,6 +13,7 @@ Env: BASE_URL, KEYCLOAK_ADMIN, KEYCLOAK_ADMIN_PASSWORD, AGENTDOX_REALM,
 import json
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -57,10 +58,14 @@ def token():
         return json.load(resp)["access_token"]
 
 
-def find(path, key, value):
-    _, arr = req("GET", path, token=TOK)
-    if isinstance(arr, list):
-        return next((x for x in arr if isinstance(x, dict) and x.get(key) == value), None)
+def find(path, key, value, retries=10):
+    for _ in range(retries):
+        _, arr = req("GET", path, token=TOK)
+        if isinstance(arr, list):
+            hit = next((x for x in arr if isinstance(x, dict) and x.get(key) == value), None)
+            if hit is not None:
+                return hit
+        time.sleep(1)
     return None
 
 
@@ -78,11 +83,12 @@ TOK = token()
 A = f"/admin/realms/{REALM}"
 
 # realm
-_, realm = req("GET", A, token=TOK, expect=(200, 404))
-if realm is None:
+status, realm = req("GET", A, token=TOK)
+if status == 404:
     req("POST", "/admin/realms", {"realm": REALM, "enabled": True,
                                   "registrationAllowed": False, "loginWithEmailAllowed": True}, token=TOK)
     print("[setup] realm created")
+    time.sleep(1)  # let it propagate
 # allow arbitrary custom attributes (Keycloak 26 user-profile)
 _, realm = req("GET", A, token=TOK)
 attrs = realm.get("attributes") or {}
@@ -136,14 +142,23 @@ srv = ensure_client("agentdox-server", {
     "protocol": "openid-connect"})
 print("[setup] clients:", web["clientId"], "(", web["id"], "),", srv["clientId"])
 
-# service-account scopes
-_, sa = req("GET", A + f"/clients/{srv['id']}/service-account-user", token=TOK)
-sa_body = dict(sa)
-sa_attrs = dict(sa.get("attributes") or {})
-sa_attrs["agentdox.scopes"] = ["demo:write ashlands:read"]
-sa_body["attributes"] = sa_attrs
-req("PUT", A + f"/users/{sa['id']}", sa_body, token=TOK)
-print("[setup] service-account scopes set")
+# service-account scopes (retry: SA user is created lazily for a fresh client)
+sa = None
+st = None
+for _ in range(20):
+    st, sa = req("GET", A + f"/clients/{srv['id']}/service-account-user", token=TOK)
+    if isinstance(sa, dict) and sa.get("id"):
+        break
+    time.sleep(1)
+if not (isinstance(sa, dict) and sa.get("id")):
+    print(f"[setup] WARN: service-account user not ready (status {st})")
+else:
+    sa_body = dict(sa)
+    sa_attrs = dict(sa.get("attributes") or {})
+    sa_attrs["agentdox.scopes"] = ["demo:write ashlands:read"]
+    sa_body["attributes"] = sa_attrs
+    req("PUT", A + f"/users/{sa['id']}", sa_body, token=TOK)
+    print("[setup] service-account scopes set")
 
 # demo user
 user = find(A + f"/users?username={DEMO_USER}&exact=true", "username", DEMO_USER)
