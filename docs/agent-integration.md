@@ -38,27 +38,45 @@ const { project, token: projectPat } = await client.projects.ensure({ slug: 'ash
 
 ## MCP config (Claude Code / Cursor)
 
-Project-scoped `.mcp.json` at repo root (git-tracked, shared):
+**HTTP transport (recommended)** — the agent talks to the running agentdox REST API over HTTP,
+so it shares the **same live store** as the web UI, with scope RBAC enforced from the bearer token.
+Put this in the agent repo's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "agentdox": {
+      "type": "http",
+      "url": "http://localhost:3003/mcp",
+      "headers": { "Authorization": "Bearer ${AGENTDOX_PROJECT_TOKEN}" }
+    }
+  }
+}
+```
+
+Set `AGENTDOX_PROJECT_TOKEN` in the agent's environment to a token that grants **write/admin on
+your project scope** (get one from the web UI's Projects view, or `POST /projects` provisioning,
+or mint a PAT via the admin API). `${VAR}` is substituted from the env by Claude Code and Cursor.
+
+**stdio (local-only, separate store):** a local MCP server that embeds agentdox directly against a
+host SQLite file. It is *not* shared with a Docker-hosted web UI:
 
 ```json
 {
   "mcpServers": {
     "agentdox": {
       "command": "node",
-      "args": ["E:/projects/agentdox/packages/mcp/dist/index.js"],
+      "args": ["E:/projects/agentdox/packages/mcp/dist/cli.js"],
       "env": { "AGENTDOX_DB": "E:/projects/agentdox/data/agentdox.db" }
     }
   }
 }
 ```
 
-> **Shared store with the Docker stack:** Do **not** bind-mount the SQLite file onto the host and
-> open it from two OSes — Windows host writers + Linux container writers on one WAL file over
-> Docker Desktop's bind mount **corrupts the DB**. Keep the server's DB in its (isolated) volume
-> and, for now, let a local agent MCP use its **own** host file — separate stores, no corruption.
-> True sharing between agents and the Docker web UI comes from an **HTTP MCP transport** (agent →
-> REST API), which is the planned path. If you run the REST server on the host instead, the host
-> MCP can share that one file safely (same OS).
+> **Shared store:** do **not** bind-mount the SQLite file to the host and open it from two OSes —
+> Windows host + Linux container writers on one WAL file corrupt it (`database disk image is
+> malformed`). Keep the server's DB in its volume and use the **HTTP transport** above for agents;
+> that is how agents and the web UI share one store, safely.
 
 ## CLAUDE.md snippet (drop into the agent's project-root memory file)
 

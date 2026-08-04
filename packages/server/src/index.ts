@@ -1,7 +1,11 @@
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import { AgentDox } from '@agentdox/core';
+import { createMcpServer } from '@agentdox/mcp';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { roleAtLeast, type ContextRequest, type Doc, type MemoryEntry, type Principal, type Role } from '@agentdox/types';
+import { randomUUID } from 'node:crypto';
+import type { ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -46,6 +50,18 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
 
   const app = Fastify({ logger: true });
   app.register(cors, { origin: true });
+
+  // Preserve raw JSON bodies (needed for the MCP streamable transport) while keeping the
+  // default parsed-object behavior on `request.body` for all other routes.
+  app.addContentTypeParser(['application/json', 'text/plain', 'application/json-rpc'], { parseAs: 'buffer' }, (request, body, done) => {
+    const raw = body.toString('utf8');
+    (request as unknown as { rawBody?: string }).rawBody = raw;
+    try {
+      done(null, JSON.parse(raw));
+    } catch {
+      done(null, undefined);
+    }
+  });
 
   // Resolve the caller's principal (without rejecting) so handlers can guard.
   app.addHook('onRequest', async (req) => {
@@ -309,6 +325,63 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     if (!scope) return reply.code(400).send({ error: 'scope_required' });
     if (!guard(req, reply, auth, principalOf(req), scope, 'read')) return;
     return dox.context.assemble({ ...req.body, scope });
+  });
+
+  // ---- MCP over HTTP (streamable transport, one authenticated session per bearer token) ----
+  const mcpSessions = new Map<string, { transport: StreamableHTTPServerTransport; close: () => void }>();
+  const mcpErr = (res: ServerResponse, status: number, message: string) => {
+    res.statusCode = status;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message }, id: null }));
+  };
+
+  app.all('/mcp', async (request, reply) => {
+    const sessionId = request.headers['mcp-session-id'] as string | undefined;
+    reply.hijack(); // we own the raw node response from here
+
+    if (request.method === 'DELETE') {
+      if (sessionId) {
+        const s = mcpSessions.get(sessionId);
+        if (s) { s.close(); mcpSessions.delete(sessionId); }
+      }
+      reply.raw.statusCode = 204;
+      reply.raw.end();
+      return;
+    }
+
+    if (request.method === 'GET') { // SSE stream for an existing session
+      const s = sessionId ? mcpSessions.get(sessionId) : undefined;
+      if (!s) { mcpErr(reply.raw, 404, 'unknown session'); return; }
+      await s.transport.handleRequest(request.raw, reply.raw);
+      return;
+    }
+
+    if (request.method !== 'POST') { reply.raw.statusCode = 405; reply.raw.end(); return; }
+    // parsedBody must be the ALREADY-PARSED object (the transport JSON-parses it again).
+    const parsedBody = request.body;
+
+    if (sessionId) { // continue an existing session
+      const s = mcpSessions.get(sessionId);
+      if (!s) { mcpErr(reply.raw, 404, 'unknown session'); return; }
+      await s.transport.handleRequest(request.raw, reply.raw, parsedBody);
+      return;
+    }
+
+    // New session: resolve the caller's principal (bearer) — reject if auth is on and unauthenticated.
+    const p = principalOf(request);
+    if (auth.enabled && !p) { mcpErr(reply.raw, 401, 'unauthorized: send a valid bearer token'); return; }
+
+    const id = randomUUID();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => id });
+    try {
+      const mcp = createMcpServer(dox, p);
+      await mcp.connect(transport);
+      mcpSessions.set(id, { transport, close: () => void transport.close().catch(() => undefined) });
+      await transport.handleRequest(request.raw, reply.raw, parsedBody);
+    } catch (e) {
+      void transport.close().catch(() => undefined);
+      mcpErr(reply.raw, 500, (e as Error).message);
+    }
   });
 
   return { app, dox, auth };

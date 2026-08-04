@@ -4,13 +4,17 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "bin": {
-    "agentdox-mcp": "./dist/index.js"
+    "agentdox-mcp": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node --disable-warning=ExperimentalWarning dist/index.js"
+    "start": "node --disable-warning=ExperimentalWarning dist/cli.js",
+    "dev": "tsx watch src/cli.ts"
   },
   "dependencies": {
     "@agentdox/core": "*",

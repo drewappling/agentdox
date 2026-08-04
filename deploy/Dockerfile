@@ -9,11 +9,12 @@ COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages ./packages
 RUN npm ci
 
-# Compile only the packages the server needs (deps: types -> auth -> core -> sdk -> server).
+# Compile the packages the server needs (deps: types -> auth -> core -> sdk -> mcp -> server).
 RUN npm run build -w @agentdox/types \
     && npm run build -w @agentdox/auth \
     && npm run build -w @agentdox/core \
     && npm run build -w @agentdox/sdk \
+    && npm run build -w @agentdox/mcp \
     && npm run build -w @agentdox/server
 
 # ---- Runtime stage: slim, non-root ----
