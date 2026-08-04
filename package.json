@@ -1,0 +1,26 @@
+{
+  "name": "agentdox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dynamic context, memory, and documentation framework for AI agents",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:types": "npm run build -w @agentdox/types",
+    "build:core": "npm run build -w @agentdox/core",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "seed": "npm run seed -w @agentdox/server",
+    "dev:server": "npm run dev -w @agentdox/server",
+    "dev:web": "npm run dev -w @agentdox/web",
+    "mcp": "npm run start -w @agentdox/mcp",
+    "test:auth": "node --disable-warning=ExperimentalWarning scripts/test-auth.mjs",
+    "test:server-auth": "node --disable-warning=ExperimentalWarning scripts/test-server-auth.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

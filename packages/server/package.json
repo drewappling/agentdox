@@ -1,0 +1,26 @@
+{
+  "name": "@agentdox/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node --disable-warning=ExperimentalWarning dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "seed": "node --disable-warning=ExperimentalWarning scripts/seed.js"
+  },
+  "dependencies": {
+    "@agentdox/auth": "*",
+    "@agentdox/core": "*",
+    "@agentdox/types": "*",
+    "@fastify/cors": "^10.0.1",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4"
+  }
+}

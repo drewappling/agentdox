@@ -1,0 +1,321 @@
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
+import cors from '@fastify/cors';
+import { AgentDox } from '@agentdox/core';
+import { roleAtLeast, type ContextRequest, type Doc, type MemoryEntry, type Principal, type Role } from '@agentdox/types';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { authenticate, guard, loadAuthContext, type AuthContext } from './auth.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(__dirname, '../../..');
+
+/** Per-request resolved principal (set once by the global onRequest hook). */
+const principals = new WeakMap<FastifyRequest, Principal | null>();
+const principalOf = (req: FastifyRequest): Principal | null => principals.get(req) ?? null;
+
+export interface BuildOptions {
+  dbPath?: string;
+  env?: NodeJS.ProcessEnv;
+  authEnabled?: boolean;
+}
+
+export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: AgentDox; auth: AuthContext } {
+  const env = opts.env ?? process.env;
+  const dbPath = opts.dbPath ?? resolve(repoRoot, 'data', 'agentdox.db');
+  mkdirSync(resolve(repoRoot, 'data'), { recursive: true });
+
+  const dox = new AgentDox(dbPath);
+  // Account for env-injected auth flag (used by tests) plus process env.
+  const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+  const auth: AuthContext = {
+    enabled: opts.authEnabled ?? mergedEnv.AGENTDOX_AUTH_ENABLED === 'true',
+    chain: null,
+    pat: null,
+  };
+  if (auth.enabled) void loadAuthContext(dox.pat, mergedEnv).then((ctx) => {
+    auth.chain = ctx.chain;
+    auth.pat = ctx.pat;
+  });
+
+  // Admin bootstrap: seed a PAT from env so the first token can be minted out-of-band.
+  const adminToken = mergedEnv.AGENTDOX_ADMIN_TOKEN;
+  if (auth.enabled && adminToken && !dox.pat.existsByRawToken(adminToken)) {
+    dox.pat.issue({ name: 'bootstrap-admin', grants: { '*': 'admin' }, rawToken: adminToken });
+  }
+
+  const app = Fastify({ logger: true });
+  app.register(cors, { origin: true });
+
+  // Resolve the caller's principal (without rejecting) so handlers can guard.
+  app.addHook('onRequest', async (req) => {
+    if (auth.enabled && auth.chain) {
+      principals.set(req, await authenticate(req, auth));
+    } else {
+      principals.set(req, null);
+    }
+  });
+
+  app.get('/health', async () => ({ ok: true, service: 'agentdox', auth: auth.enabled, db: dbPath }));
+
+  // ---- PAT management (requires wildcard admin) ----
+  const adminOnly = (req: FastifyRequest, reply: FastifyReply): boolean => {
+    if (!guard(req, reply, auth, principalOf(req), undefined, 'admin')) return false;
+    const p = principalOf(req);
+    if (!p || !p.grants['*'] || p.grants['*'] !== 'admin') {
+      void reply.code(403).send({ error: 'forbidden', message: 'admin required' });
+      return false;
+    }
+    return true;
+  };
+
+  app.get('/auth/tokens', async (req, reply) => {
+    if (!adminOnly(req, reply)) return;
+    return dox.pat.list();
+  });
+
+  app.post<{ Body: { name?: string; grants?: Record<string, Role>; ttlMs?: number } }>('/auth/tokens', async (req, reply) => {
+    if (!adminOnly(req, reply)) return;
+    const grants = req.body?.grants ?? { '*': 'admin' };
+    const issued = dox.pat.issue({ name: req.body?.name, grants, ttlMs: req.body?.ttlMs });
+    return { id: issued.id, token: issued.token, expiresAt: issued.expiresAt, grants };
+  });
+
+  app.delete('/auth/tokens/:id', async (req, reply) => {
+    if (!adminOnly(req, reply)) return;
+    if (!dox.pat.revoke((req.params as { id: string }).id)) return reply.code(404).send({ error: 'not_found' });
+    return { ok: true };
+  });
+
+  // ---- Memory ----
+  app.get('/memory', async (req, reply) => {
+    const q = req.query as { category?: string; target?: string; tag?: string; limit?: string };
+    const p = principalOf(req);
+    if (q.category) {
+      if (!guard(req, reply, auth, p, q.category, 'read')) return;
+    } else if (auth.enabled && !guard(req, reply, auth, p, undefined, 'read')) {
+      return;
+    }
+    const entries = dox.memory.list({
+      category: q.category,
+      target: q.target,
+      tag: q.tag,
+      limit: q.limit ? parseInt(q.limit, 10) : undefined,
+    });
+    if (!auth.enabled) return entries;
+    // Filter down to the caller's readable scopes when listing without a category filter.
+    return entries.filter((e) => scopeGrant(validatePrincipal(p), e.category ?? '', 'read'));
+  });
+
+  app.get('/memory/search', async (req, reply) => {
+    const q = req.query as { q?: string; category?: string; target?: string; tag?: string; limit?: string };
+    if (!q.q) return [];
+    if (q.category && !guard(req, reply, auth, principalOf(req), q.category, 'read')) return;
+    return dox.memory.search(q.q, {
+      category: q.category,
+      target: q.target,
+      tag: q.tag,
+      limit: q.limit ? parseInt(q.limit, 10) : undefined,
+    });
+  });
+
+  app.get('/memory/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const entry = dox.memory.get(id);
+    if (!entry) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), entry.category ?? '', 'read')) return;
+    return entry;
+  });
+
+  app.post<{ Body: Partial<MemoryEntry> }>('/memory', async (req, reply) => {
+    const body = req.body;
+    if (!body?.content) return reply.code(400).send({ error: 'content_required' });
+    if (!guard(req, reply, auth, principalOf(req), body.category ?? '', 'write')) return;
+    return dox.memory.create({
+      content: body.content,
+      category: body.category,
+      target: body.target,
+      importance: body.importance ?? 0.5,
+      tags: body.tags ?? [],
+      source: body.source,
+    });
+  });
+
+  app.patch<{ Params: { id: string }; Body: Partial<Omit<MemoryEntry, 'id' | 'createdAt'>> }>(
+    '/memory/:id',
+    async (req, reply) => {
+      const existing = dox.memory.get(req.params.id);
+      if (!existing) return reply.code(404).send({ error: 'not_found' });
+      if (!guard(req, reply, auth, principalOf(req), existing.category ?? '', 'write')) return;
+      const entry = dox.memory.update(req.params.id, req.body);
+      if (!entry) return reply.code(404).send({ error: 'not_found' });
+      return entry;
+    },
+  );
+
+  app.delete('/memory/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const existing = dox.memory.get(id);
+    if (!existing) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), existing.category ?? '', 'admin')) return;
+    return { ok: dox.memory.remove(id) };
+  });
+
+  // ---- Docs ----
+  app.get('/docs', async (req, reply) => {
+    const q = req.query as { scope?: string; tag?: string; limit?: string };
+    if (q.scope && !guard(req, reply, auth, principalOf(req), q.scope, 'read')) return;
+    return dox.docs.list({ scope: q.scope, tag: q.tag, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+  });
+
+  app.get('/docs/search', async (req, reply) => {
+    const q = req.query as { q?: string; scope?: string; limit?: string };
+    if (!q.q) return [];
+    if (q.scope && !guard(req, reply, auth, principalOf(req), q.scope, 'read')) return;
+    return dox.docs.search(q.q, { scope: q.scope, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+  });
+
+  app.get('/docs/slug/:slug', async (req, reply) => {
+    const doc = dox.docs.getBySlug((req.params as { slug: string }).slug);
+    if (!doc) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), doc.scope ?? '', 'read')) return;
+    return doc;
+  });
+
+  app.get('/docs/:id', async (req, reply) => {
+    const doc = dox.docs.get((req.params as { id: string }).id);
+    if (!doc) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), doc.scope ?? '', 'read')) return;
+    return doc;
+  });
+
+  app.get('/docs/:id/history', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const doc = dox.docs.get(id);
+    if (!doc) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), doc.scope ?? '', 'read')) return;
+    return dox.docs.history(id);
+  });
+
+  app.post<{ Body: Partial<Doc> & { slug: string; title: string; content: string } }>('/docs', async (req, reply) => {
+    const b = req.body;
+    if (!b?.slug || !b.title || !b.content) return reply.code(400).send({ error: 'slug_title_content_required' });
+    if (!guard(req, reply, auth, principalOf(req), b.scope ?? '', 'write')) return;
+    return dox.docs.create({ slug: b.slug, title: b.title, content: b.content, tags: b.tags ?? [], scope: b.scope });
+  });
+
+  app.patch<{ Params: { id: string }; Body: Partial<Pick<Doc, 'title' | 'content' | 'tags' | 'scope' | 'slug'>> }>(
+    '/docs/:id',
+    async (req, reply) => {
+      const existing = dox.docs.get(req.params.id);
+      if (!existing) return reply.code(404).send({ error: 'not_found' });
+      if (!guard(req, reply, auth, principalOf(req), existing.scope ?? '', 'write')) return;
+      const doc = dox.docs.update(req.params.id, req.body);
+      if (!doc) return reply.code(404).send({ error: 'not_found' });
+      return doc;
+    },
+  );
+
+  app.delete('/docs/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const existing = dox.docs.get(id);
+    if (!existing) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), existing.scope ?? '', 'admin')) return;
+    return { ok: dox.docs.remove(id) };
+  });
+
+  // ---- Sessions ----
+  app.get('/sessions', async (req, reply) => {
+    const q = req.query as { scope?: string; limit?: string };
+    if (q.scope && !guard(req, reply, auth, principalOf(req), q.scope, 'read')) return;
+    return dox.sessions.list(q.scope, q.limit ? parseInt(q.limit, 10) : undefined);
+  });
+
+  app.post<{ Body: { scope: string; title?: string } }>('/sessions', async (req, reply) => {
+    if (!req.body?.scope) return reply.code(400).send({ error: 'scope_required' });
+    if (!guard(req, reply, auth, principalOf(req), req.body.scope, 'write')) return;
+    return dox.sessions.create({ scope: req.body.scope, title: req.body.title });
+  });
+
+  app.get('/sessions/:id', async (req, reply) => {
+    const s = dox.sessions.get((req.params as { id: string }).id);
+    if (!s) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), s.scope, 'read')) return;
+    return s;
+  });
+
+  app.post<{ Params: { id: string }; Body: { role: string; content: string; refs?: string[] } }>(
+    '/sessions/:id/messages',
+    async (req, reply) => {
+      const s = dox.sessions.get(req.params.id);
+      if (!s) return reply.code(404).send({ error: 'session_not_found' });
+      if (!guard(req, reply, auth, principalOf(req), s.scope, 'write')) return;
+      const { role, content, refs } = req.body;
+      if (!role || !content) return reply.code(400).send({ error: 'role_content_required' });
+      const msg = dox.sessions.append(req.params.id, { role: role as never, content, refs });
+      if (!msg) return reply.code(404).send({ error: 'session_not_found' });
+      return msg;
+    },
+  );
+
+  app.post('/sessions/:id/end', async (req, reply) => {
+    const s = dox.sessions.get((req.params as { id: string }).id);
+    if (!s) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), s.scope, 'write')) return;
+    return dox.sessions.end(s.id);
+  });
+
+  // ---- Context ----
+  app.post<{ Body: ContextRequest }>('/context/assemble', async (req, reply) => {
+    const scope = req.body?.scope;
+    if (!scope) return reply.code(400).send({ error: 'scope_required' });
+    if (!guard(req, reply, auth, principalOf(req), scope, 'read')) return;
+    return dox.context.assemble({ ...req.body, scope });
+  });
+
+  return { app, dox, auth };
+}
+
+export async function startServer(opts: BuildOptions & { port?: number } = {}): Promise<{ app: FastifyInstance; dox: AgentDox; auth: AuthContext; port: number }> {
+  const { app, dox, auth } = buildApp(opts);
+  const port = opts.port ?? 3003;
+  // Wait for async OIDC discovery to finish before listening.
+  await new Promise<void>((resolve_) => {
+    if (!auth.enabled) return resolve_();
+    const check = () => (auth.chain ? resolve_() : setTimeout(check, 25));
+    check();
+  });
+  await app.listen({ port, host: '0.0.0.0' });
+  // Report the actual bound port (matters when port === 0 / ephemeral).
+  const actualPort = (app.server.address() as import('node:net').AddressInfo).port;
+  return { app, dox, auth, port: actualPort };
+}
+
+// Direct execution
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3003;
+  const { app, dox, port: p } = await startServer({ port });
+  const shutdown = () => {
+    app.close().then(() => {
+      dox.close();
+      process.exit(0);
+    });
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  console.log(`[agentdox] API listening on http://localhost:${p} (auth ${dox ? 'configured' : ''})`);
+}
+
+/** Small internal helpers for scope-filtering list responses. */
+
+/** Ensure a principal exists (caller already passed guard() when auth is enabled). */
+function validatePrincipal(p: Principal | null): Principal {
+  if (!p) throw new Error('principal missing despite auth guard');
+  return p;
+}
+
+/** Does the principal hold at least `role` on `scope` (or a wildcard grant)? */
+function scopeGrant(principal: Principal, scope: string, role: Role): boolean {
+  const grant = principal.grants[scope] ?? principal.grants['*'] ?? 'none';
+  return roleAtLeast(grant, role);
+}
