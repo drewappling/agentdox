@@ -37,8 +37,10 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "${AGENTDOX_PORT:-3003}:3003"
+    # Bind the data dir to the host so the Docker server and host-side MCP/SDK clients
+    # (e.g. an agent in another repo) share one SQLite store at $AGENTDOX_DATA_HOST.
     volumes:
-      - agentdox-data:/app/data
+      - "${AGENTDOX_DATA_HOST:-../data}:/app/data"
     depends_on:
       keycloak:
         condition: service_healthy
@@ -74,6 +76,3 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
-
-volumes:
-  agentdox-data:
