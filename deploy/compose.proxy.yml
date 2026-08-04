@@ -1,0 +1,54 @@
+# Production / NAS deployment: adds a Caddy ingress and public hostnames.
+# Overrides deploy/docker-compose.yml:
+#   DOMAIN=dox.example.com KEYCLOAK_HOSTNAME=auth.example.com \
+#   docker compose -f deploy/docker-compose.yml -f deploy/compose.proxy.yml \
+#     --env-file deploy/.env up -d --build
+#
+# With a public Keycloak hostname, OIDC tokens carry iss=https://auth.example.com/...,
+# so AGENTDOX_OIDC_ISSUER must match (set it in deploy/.env for production).
+# Caddy auto-provisions Let's Encrypt TLS for real domains.
+
+services:
+  agentdox:
+    # No direct host port exposure behind the proxy
+    ports: []
+    environment:
+      AGENTDOX_OIDC_ISSUER: "https://${KEYCLOAK_HOSTNAME:?}/realms/agentdox"
+    extra_hosts: []
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  keycloak:
+    command: ["start", "--optimized"]
+    environment:
+      KC_HOSTNAME: "${KEYCLOAK_HOSTNAME:?}"
+      KC_HOSTNAME_PORT: "443"
+      KC_PROXY: "edge"
+      KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_ADMIN:-admin}"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?}"
+      KC_HEALTH_ENABLED: "true"
+    ports: []
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: agentdox-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: "${DOMAIN:?set DOMAIN}"
+      KEYCLOAK_HOSTNAME: "${KEYCLOAK_HOSTNAME:?set KEYCLOAK_HOSTNAME}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - agentdox
+      - keycloak
+
+volumes:
+  caddy-data:
+  caddy-config:

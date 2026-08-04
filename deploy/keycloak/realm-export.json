@@ -1,0 +1,92 @@
+{
+  "realm": "agentdox",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "defaultRoles": ["default-roles-agentdox"],
+  "roles": {
+    "realm": [
+      {
+        "name": "default-roles-agentdox",
+        "description": "${role_default-roles}",
+        "composite": true,
+        "composites": { "realm": ["offline_access", "uma_authorization"] }
+      }
+    ],
+    "client": {}
+  },
+  "clientScopes": [
+    {
+      "name": "agentdox",
+      "protocol": "openid-connect",
+      "description": "Carries the agentdox:scopes claim (<scope>:<role> pairs for RBAC)",
+      "attributes": { "include.in.token.scope": "true" },
+      "protocolMappers": [
+        {
+          "name": "agentdox-scopes",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "agentdox.scopes",
+            "claim.name": "agentdox:scopes",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "agentdox-web",
+      "name": "agentdox Web UI",
+      "rootUrl": "http://localhost:3003",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": ["http://localhost:3003/*", "http://localhost:5173/*", "http://dox.localhost/*", "http://localhost/*"],
+      "webOrigins": ["+"],
+      "defaultClientScopes": ["web-origins", "agentdox", "acr", "roles", "profile", "email"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
+    },
+    {
+      "clientId": "agentdox-server",
+      "name": "agentdox API / server",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "agentdox-server-dev-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["web-origins", "agentdox", "acr", "roles", "profile", "email"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
+    }
+  ],
+  "users": [
+    {
+      "username": "drew",
+      "enabled": true,
+      "email": "drew@example.com",
+      "firstName": "Drew",
+      "emailVerified": true,
+      "attributes": {
+        "agentdox.scopes": ["demo:write ashlands:read"]
+      },
+      "credentials": [{ "type": "password", "value": "demo123", "temporary": false }],
+      "realmRoles": ["default-roles-agentdox"]
+    }
+  ]
+}

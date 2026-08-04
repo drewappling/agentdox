@@ -1,0 +1,17 @@
+# Caddy ingress for the agentdox NAS/production deployment.
+# Two sites: the app and the OIDC IdP (Keycloak). TLS is auto-provisioned for real domains.
+# Hostnames are injected from compose (DOMAIN / KEYCLOAK_HOSTNAME env).
+
+{$DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-X-Frame-Options
+	}
+	reverse_proxy agentdox:3003
+}
+
+{$KEYCLOAK_HOSTNAME} {
+	encode zstd gzip
+	reverse_proxy keycloak:8080
+}

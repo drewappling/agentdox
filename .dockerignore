@@ -1,0 +1,13 @@
+# Build context: repo root. Keep the image build lean.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+data
+**/*.db
+**/*.db-wal
+**/*.db-shm
+.git
+.env
+.env.*
+deploy
+scripts

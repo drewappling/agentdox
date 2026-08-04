@@ -1,0 +1,69 @@
+# agentdox local full-stack (for testing on Docker Desktop before the NAS)
+#
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
+#
+# Services:
+#   agentdox  - REST API (auth enabled, OIDC + PAT)
+#   keycloak  - self-hosted OIDC IdP (realm auto-imported on first start)
+#
+# Networking note: agentdox reaches Keycloak at http://localhost:8080 via
+# host-gateway, so tokens carry iss == http://localhost:8080/realms/agentdox —
+# the SAME URL the host (browser/curl) uses. This keeps issuer validation consistent
+# without a reverse proxy. For production on the NAS, see compose.proxy.yml.
+
+name: agentdox
+
+services:
+  agentdox:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: agentdox/server:local
+    container_name: agentdox-server
+    restart: unless-stopped
+    environment:
+      PORT: "3003"
+      AGENTDOX_AUTH_ENABLED: "${AGENTDOX_AUTH_ENABLED:-true}"
+      AGENTDOX_ADMIN_TOKEN: "${AGENTDOX_ADMIN_TOKEN:?set AGENTDOX_ADMIN_TOKEN in deploy/.env}"
+      AGENTDOX_OIDC_ISSUER: "${AGENTDOX_OIDC_ISSUER:-http://localhost:8080/realms/agentdox}"
+      AGENTDOX_OIDC_CLIENT_ID: "${AGENTDOX_OIDC_CLIENT_ID:-agentdox-server}"
+      AGENTDOX_OIDC_CLIENT_SECRET: "${AGENTDOX_OIDC_CLIENT_SECRET:-agentdox-server-dev-secret}"
+      AGENTDOX_OIDC_AUDIENCE: "${AGENTDOX_OIDC_AUDIENCE:-}"
+    # Let the container reach Keycloak through the same localhost:8080 URL as the host.
+    extra_hosts:
+      - "localhost:host-gateway"
+    ports:
+      - "${AGENTDOX_PORT:-3003}:3003"
+    volumes:
+      - agentdox-data:/app/data
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3003/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: agentdox-keycloak
+    restart: unless-stopped
+    command: ["start-dev"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_ADMIN:-admin}"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in deploy/.env}"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo | cat <&3"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 45s
+
+volumes:
+  agentdox-data:
