@@ -112,6 +112,33 @@ export interface ContextSlice {
   chars: number;
 }
 
+// ---- Projects ----
+
+/**
+ * A named workspace. `slug` doubles as the agentdox `scope` namespace, so memory, docs,
+ * and sessions keyed by that scope belong to the project. Agents create/ensure projects
+ * dynamically on connect.
+ */
+export interface Project {
+  id: string;
+  /** URL-ish, immutable key; also the scope namespace (e.g. "ashlands"). */
+  slug: string;
+  /** Human-friendly display name. */
+  name: string;
+  description?: string;
+  /** Scope grant owner (sub), if it was agent-provisioned. */
+  ownerSub?: string;
+  createdAt: string;
+}
+
+/** Result of provisioning a project: the project plus an optional freshly-issued token. */
+export interface ProjectProvision {
+  project: Project;
+  /** A project-scoped PAT (`{slug}:admin`) minted on first claim — shown exactly once. */
+  token: string | null;
+  expiresAt?: number | null;
+}
+
 // ---- Authentication & authorization ----
 
 /** Per-scope access level. Inherits: admin ⊃ write ⊃ read ⊃ none. */

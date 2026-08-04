@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS pat (
   revoked     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_pat_sub ON pat(sub);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id          TEXT PRIMARY KEY,
+  slug        TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  description TEXT,
+  owner_sub   TEXT,
+  created_at  TEXT NOT NULL
+);
 `;
 
 export interface Store {

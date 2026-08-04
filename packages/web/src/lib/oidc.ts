@@ -13,8 +13,10 @@ const sha256 = async (s: string): Promise<ArrayBuffer> =>
 /** Start the Authorization Code + PKCE flow against the configured OIDC issuer. */
 export async function startLogin(): Promise<void> {
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
-  sessionStorage.setItem('agentdox:pkce_verifier', verifier);
   const challenge = b64url(await sha256(verifier));
+  const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
+  sessionStorage.setItem('agentdox:pkce_verifier', verifier);
+  sessionStorage.setItem('agentdox:oidc_state', state);
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: config.oidcClientId,
@@ -22,17 +24,28 @@ export async function startLogin(): Promise<void> {
     scope: 'openid agentdox',
     code_challenge: challenge,
     code_challenge_method: 'S256',
-    state: 'agentdox',
+    state,
   });
   window.location.href = `${config.oidcIssuer}/protocol/openid-connect/auth?${params.toString()}`;
 }
 
-/** If the current URL carries an auth code, exchange it for an access token. Returns token or null. */
+/** If the current URL carries an auth code, verify state + exchange it for an access token. */
 export async function handleLoginRedirect(): Promise<string | null> {
   const url = new URL(window.location.href);
   const code = url.searchParams.get('code');
   if (!code) return null;
+
+  // Reject a crafted/cross-site redirect: the state must match what we started with.
+  const expected = sessionStorage.getItem('agentdox:oidc_state');
+  if (!expected || url.searchParams.get('state') !== expected) {
+    throw new Error('OIDC state mismatch — login aborted');
+  }
+
   const verifier = sessionStorage.getItem('agentdox:pkce_verifier') ?? '';
+  // one-time use
+  sessionStorage.removeItem('agentdox:pkce_verifier');
+  sessionStorage.removeItem('agentdox:oidc_state');
+
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     client_id: config.oidcClientId,

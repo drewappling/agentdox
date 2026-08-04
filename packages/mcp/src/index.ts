@@ -200,6 +200,37 @@ server.registerTool(
   },
 );
 
+// ---------- Projects ----------
+server.registerTool(
+  'project_ensure',
+  {
+    title: 'Ensure project',
+    description: 'Create or get an agent workspace (project). The slug becomes the scope namespace for memory/docs/sessions. Call this on connect so subsequent memory/docs are scoped to your project.',
+    inputSchema: {
+      slug: z.string().describe('Stable identifier, also the scope (e.g. ashlands)'),
+      name: z.string().describe('Human-friendly project name'),
+      description: z.string().optional(),
+    },
+  },
+  async ({ slug, name, description }) => {
+    const project = dox.projects.ensure({ slug, name, description });
+    return ok(`Project ${project.slug} (${project.name})`, project);
+  },
+);
+
+server.registerTool(
+  'project_list',
+  {
+    title: 'List projects',
+    description: 'List all known agent workspaces / projects.',
+    inputSchema: {},
+  },
+  async () => {
+    const projects = dox.projects.list();
+    return ok(projects.map((p) => `- ${p.slug}: ${p.name}`).join('\n') || '(no projects)', projects);
+  },
+);
+
 // ---------- Context ----------
 server.registerTool(
   'context_assemble',
@@ -233,4 +264,4 @@ server.registerTool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error('[agentdox-mcp] server ready — tools: memory_add, memory_search, memory_list, memory_remove, memory_update, docs_write, docs_read, docs_search, docs_update, session_start, session_append, context_assemble');
+console.error('[agentdox-mcp] server ready — tools: project_ensure, project_list, memory_add, memory_search, memory_list, memory_remove, memory_update, docs_write, docs_read, docs_search, docs_update, session_start, session_append, context_assemble');

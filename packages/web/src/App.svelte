@@ -6,6 +6,7 @@
   import Memory from './views/Memory.svelte';
   import Docs from './views/Docs.svelte';
   import Context from './views/Context.svelte';
+  import Projects from './views/Projects.svelte';
 
   const readHash = () => (window.location.hash.replace(/^#/, '').split('?')[0] || '/memory');
   let route = $state(readHash());
@@ -24,6 +25,7 @@
   });
 
   const nav = [
+    ['/projects', 'Projects'],
     ['/memory', 'Memory'],
     ['/docs', 'Docs'],
     ['/context', 'Context'],
@@ -43,7 +45,9 @@
     <button class="ghost" onclick={() => setToken(null)}>sign out</button>
   </header>
   <main>
-    {#if route === '/docs'}
+    {#if route === '/projects'}
+      <Projects />
+    {:else if route === '/docs'}
       <Docs />
     {:else if route === '/context'}
       <Context />

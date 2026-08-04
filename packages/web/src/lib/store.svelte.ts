@@ -17,5 +17,6 @@ export function setToken(t: string | null): void {
 
 /** Build an authenticated SDK client bound to the current token. */
 export function api(): AgentDoxClient {
-  return new AgentDoxClient(config.apiBase, fetch, auth.token ?? undefined);
+  // Native fetch binding is handled inside the SDK (calls fetch unbound).
+  return new AgentDoxClient(config.apiBase, undefined, auth.token ?? undefined);
 }

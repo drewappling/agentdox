@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { AgentDoxClient } from '@agentdox/sdk';
   import { startLogin } from '../lib/oidc';
-  import { api, setToken } from '../lib/store.svelte';
+  import { setToken } from '../lib/store.svelte';
+  import { config } from '../lib/config';
 
   let pat = $state('');
   let msg = $state('');
@@ -10,13 +12,14 @@
     busy = true;
     msg = '';
     const raw = pat.trim();
-    setToken(raw);
     if (!raw) { busy = false; msg = 'enter a token'; return; }
+    // Validate with a throwaway client first; only commit the token once it works,
+    // so a bad token never flashes the authed shell.
     try {
-      await api().health();
+      await new AgentDoxClient(config.apiBase, undefined, raw).health();
+      setToken(raw);
       msg = 'authenticated';
     } catch (e) {
-      setToken(null);
       msg = `token rejected: ${(e as Error).message}`;
     }
     busy = false;
@@ -34,8 +37,8 @@
 
     <div class="divider"><span>or</span></div>
 
-    <label>Paste an access token (OIDC) or PAT</label>
-    <textarea bind:value={pat} rows={3} placeholder="token…"></textarea>
+    <label for="pat">Paste an access token (OIDC) or PAT</label>
+    <textarea id="pat" bind:value={pat} rows={3} placeholder="token…"></textarea>
     <button onclick={usePat} disabled={busy}>Use token</button>
 
     {#if msg}<p class="msg">{msg}</p>{/if}

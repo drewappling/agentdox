@@ -12,13 +12,15 @@
   let error = $state('');
   let newSlug = $state('');
   let newTitle = $state('');
+  let seq = 0;
 
   async function load() {
+    const mine = ++seq;
     try {
-      docs = await api().docs.list({ scope });
-      error = '';
+      const r = await api().docs.list({ scope });
+      if (mine === seq) { docs = r; error = ''; }
     } catch (e) {
-      error = (e as Error).message;
+      if (mine === seq) error = (e as Error).message;
     }
   }
 
@@ -26,11 +28,22 @@
     current = d;
     source = d.content;
     editing = false;
-    html = await renderMarkdown(d.content);
+    // Top-level await so a render error surfaces (not an unhandled rejection).
+    try {
+      html = await renderMarkdown(d.content);
+      error = '';
+    } catch (e) {
+      error = (e as Error).message;
+    }
   }
 
   async function preview() {
-    html = await renderMarkdown(source);
+    try {
+      html = await renderMarkdown(source);
+      error = '';
+    } catch (e) {
+      error = (e as Error).message;
+    }
   }
 
   async function save() {
@@ -53,7 +66,13 @@
 
   async function createDoc() {
     try {
-      const d = await api().docs.create({ slug: newSlug.trim(), title: newTitle.trim() || newSlug.trim(), content: '', scope });
+      const title = newTitle.trim() || newSlug.trim();
+      const d = await api().docs.create({
+        slug: newSlug.trim(),
+        title,
+        content: `# ${title}\n\n`,
+        scope,
+      });
       newSlug = '';
       newTitle = '';
       await load();
@@ -79,9 +98,11 @@
     </div>
     <ul>
       {#each docs as d (d.id)}
-        <li class:active={current?.id === d.id} onclick={() => open(d)}>
-          <span class="slug">{d.slug}</span>
-          <span class="v">v{d.version}</span>
+        <li class:active={current?.id === d.id}>
+          <button class="item" class:active={current?.id === d.id} onclick={() => open(d)}>
+            <span class="slug">{d.slug}</span>
+            <span class="v">v{d.version}</span>
+          </button>
         </li>
       {/each}
       {#if docs.length === 0}<li class="empty">No docs in this scope.</li>{/if}
@@ -123,8 +144,10 @@
   .new { display: grid; gap: 6px; }
   .new input { background: #0f1117; color: inherit; border: 1px solid #333a4d; border-radius: 6px; padding: 7px; }
   .list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  .list li { cursor: pointer; border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; display: flex; justify-content: space-between; }
+  .list li { padding: 0; border: 1px solid transparent; border-radius: 8px; }
   .list li.active { border-color: #4f5bd5; background: #1a1e2c; }
+  .list button.item { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; background: transparent; color: inherit; border: none; border-radius: 8px; cursor: pointer; text-align: left; }
+  .list button.item:hover { background: #1a1e2c; }
   .slug { color: #e6e8ee; font-size: 13px; }
   .v { color: #556; font-size: 12px; }
   button { background: #2b3040; color: #fff; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; }

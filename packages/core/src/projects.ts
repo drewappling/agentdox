@@ -1,0 +1,59 @@
+import type { Project } from '@agentdox/types';
+import type { Store } from './db.js';
+import { newId, nowIso } from './util.js';
+
+interface Row {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  owner_sub: string | null;
+  created_at: string;
+}
+
+export interface NewProject {
+  slug: string;
+  name: string;
+  description?: string;
+  ownerSub?: string;
+}
+
+const toProject = (r: Row): Project => ({
+  id: r.id,
+  slug: r.slug,
+  name: r.name,
+  description: r.description ?? undefined,
+  ownerSub: r.owner_sub ?? undefined,
+  createdAt: r.created_at,
+});
+
+/** A named workspace whose `slug` is the agentdox scope namespace. */
+export class ProjectService {
+  constructor(private readonly store: Store) {}
+
+  list(): Project[] {
+    const rows = this.store.db.prepare('SELECT * FROM projects ORDER BY created_at DESC').all() as unknown as Row[];
+    return rows.map(toProject);
+  }
+
+  get(slug: string): Project | null {
+    const row = this.store.db.prepare('SELECT * FROM projects WHERE slug = ?').get(slug) as Row | undefined;
+    return row ? toProject(row) : null;
+  }
+
+  getById(id: string): Project | null {
+    const row = this.store.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Row | undefined;
+    return row ? toProject(row) : null;
+  }
+
+  /** Create if absent, otherwise return the existing project (idempotent for agents). */
+  ensure(input: NewProject): Project {
+    const existing = this.get(input.slug);
+    if (existing) return existing;
+    const id = newId('proj');
+    this.store.db
+      .prepare('INSERT INTO projects (id, slug, name, description, owner_sub, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, input.slug, input.name, input.description ?? null, input.ownerSub ?? null, nowIso());
+    return this.get(input.slug) as Project;
+  }
+}

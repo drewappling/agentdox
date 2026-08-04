@@ -7,13 +7,15 @@
   let content = $state('');
   let error = $state('');
   let busy = $state(false);
+  let seq = 0;
 
   async function load() {
+    const mine = ++seq;
     try {
-      entries = await api().memory.list();
-      error = '';
+      const r = await api().memory.list();
+      if (mine === seq) { entries = r; error = ''; }
     } catch (e) {
-      error = (e as Error).message;
+      if (mine === seq) error = (e as Error).message;
     }
   }
 

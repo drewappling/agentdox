@@ -87,6 +87,44 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     return { ok: true };
   });
 
+  // ---- Projects (agent-provisioned workspaces; slug == scope namespace) ----
+  app.get('/projects', async (req, reply) => {
+    const projects = dox.projects.list();
+    if (!auth.enabled) return projects;
+    const p = validatePrincipal(principalOf(req));
+    return projects.filter((pr) => scopeGrant(p, pr.slug, 'read') || pr.ownerSub === p.sub);
+  });
+
+  app.get('/projects/:slug', async (req, reply) => {
+    const pr = dox.projects.get((req.params as { slug: string }).slug);
+    if (!pr) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), pr.slug, 'read')) return;
+    return pr;
+  });
+
+  app.post<{ Body: { slug: string; name: string; description?: string } }>('/projects', async (req, reply) => {
+    const b = req.body ?? ({} as { slug?: string; name?: string; description?: string });
+    if (!b.slug || !b.name) return reply.code(400).send({ error: 'slug_name_required' });
+    const existing = dox.projects.get(b.slug);
+    if (existing) {
+      if (!guard(req, reply, auth, principalOf(req), existing.slug, 'read')) return;
+      return { project: existing, token: null, expiresAt: null };
+    }
+    const p = principalOf(req);
+    if (auth.enabled && !p) return reply.code(401).send({ error: 'unauthorized', message: 'authenticate to create a project' });
+    const project = dox.projects.ensure({ slug: b.slug, name: b.name, description: b.description, ownerSub: p?.sub });
+    // First claim of a brand-new project -> hand the agent a scoped PAT (shown once).
+    let token: string | null = null;
+    let expiresAt: number | null = null;
+    if (auth.enabled && p && !scopeGrant(p, project.slug, 'write')) {
+      const ttlMs = 90 * 24 * 3600 * 1000; // 90 days
+      const issued = dox.pat.issue({ name: `project:${project.slug}`, grants: { [project.slug]: 'admin' }, ttlMs });
+      token = issued.token;
+      expiresAt = issued.expiresAt ?? null;
+    }
+    return { project, token, expiresAt };
+  });
+
   // ---- Memory ----
   app.get('/memory', async (req, reply) => {
     const q = req.query as { category?: string; target?: string; tag?: string; limit?: string };

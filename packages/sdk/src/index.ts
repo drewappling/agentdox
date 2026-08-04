@@ -5,6 +5,8 @@ import type {
   DocVersion,
   MemoryEntry,
   MemoryHit,
+  Project,
+  ProjectProvision,
   Session,
   SessionMessage,
 } from '@agentdox/types';
@@ -40,7 +42,10 @@ export class AgentDoxClient {
     const headers: Record<string, string> = {};
     if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    const res = await this.fetchImpl(`${this.baseUrl}${path}${qs}`, {
+    // Invoke fetch as an unbound local so native fetch keeps `window`/globalThis as `this`
+    // (Chrome/Safari reject fetch called with an arbitrary receiver).
+    const f: typeof fetch = this.fetchImpl;
+    const res = await f(`${this.baseUrl}${path}${qs}`, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -116,5 +121,14 @@ export class AgentDoxClient {
   // ---- Context ----
   context = {
     assemble: (req: ContextRequest) => this.request<ContextSlice>('POST', '/context/assemble', req),
+  };
+
+  // ---- Projects (agent-provisioned workspaces) ----
+  projects = {
+    list: () => this.request<Project[]>('GET', '/projects'),
+    get: (slug: string) => this.request<Project>('GET', `/projects/${encodeURIComponent(slug)}`),
+    /** Create/ensure a project workspace by slug. Hands back a scoped PAT on first claim. */
+    ensure: (input: { slug: string; name: string; description?: string }) =>
+      this.request<ProjectProvision>('POST', '/projects', input),
   };
 }

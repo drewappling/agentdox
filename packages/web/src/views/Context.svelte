@@ -4,18 +4,20 @@
 
   let scope = $state('demo');
   let query = $state('');
-  const memoryLimit = $state(12);
-  const docsLimit = $state(2);
-  const sessionLimit = $state(10);
+  let memoryLimit = $state(12);
+  let docsLimit = $state(2);
+  let sessionLimit = $state(10);
   let slice = $state<any | null>(null);
   let error = $state('');
+  let seq = 0;
 
   async function run() {
+    const mine = ++seq;
     try {
-      slice = await api().context.assemble({ scope, query: query || undefined, memoryLimit, docsLimit, sessionLimit });
-      error = '';
+      const s = await api().context.assemble({ scope, query: query || undefined, memoryLimit, docsLimit, sessionLimit });
+      if (mine === seq) { slice = s; error = ''; }
     } catch (e) {
-      error = (e as Error).message;
+      if (mine === seq) error = (e as Error).message;
     }
   }
 
@@ -26,11 +28,11 @@
 <p class="hint">Assemble the prompt-ready context block for a scope — memory + docs + recent conversation, ranked by relevance.</p>
 
 <div class="controls">
-  <label>scope <input bind:value={scope} /></label>
-  <label>query <input bind:value={query} placeholder="optional relevance bias" /></label>
-  <label>memory {memoryLimit}</label>
-  <label>docs {docsLimit}</label>
-  <label>session {sessionLimit}</label>
+  <label class="field">scope <input bind:value={scope} /></label>
+  <label class="field">query <input bind:value={query} placeholder="optional relevance bias" /></label>
+  <label class="field">memory <input type="range" min="1" max="50" bind:value={memoryLimit} /> {memoryLimit}</label>
+  <label class="field">docs <input type="range" min="0" max="20" bind:value={docsLimit} /> {docsLimit}</label>
+  <label class="field">session <input type="range" min="0" max="50" bind:value={sessionLimit} /> {sessionLimit}</label>
   <button onclick={run}>assemble</button>
 </div>
 
