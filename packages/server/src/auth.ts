@@ -32,6 +32,8 @@ export async function loadAuthContext(pat: PatService | null, env: NodeJS.Proces
     providers.push(
       await OidcAuthProvider.create({
         issuer,
+        discoveryBaseUrl: env.AGENTDOX_OIDC_DISCOVERY_URL || undefined,
+        jwksUri: env.AGENTDOX_OIDC_JWKS_URI || undefined,
         audience: env.AGENTDOX_OIDC_AUDIENCE || undefined,
         scopeClaim: env.AGENTDOX_OIDC_SCOPE_CLAIM || undefined,
       }),

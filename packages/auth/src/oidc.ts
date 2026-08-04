@@ -5,10 +5,18 @@ import type { AuthProvider, VerifiedResult } from './providers.js';
 import { parseScopeGrants } from './rbac.js';
 
 export interface OidcAuthProviderOptions {
-  /** OIDC issuer base URL, e.g. https://auth.example.com/realms/agentdox */
+  /** OIDC issuer base URL, e.g. https://auth.example.com/realms/agentdox — used for token `iss` validation. */
   issuer: string;
+  /**
+   * Where to fetch OIDC discovery + JWKS. Defaults to `issuer`. Set this when the caller must
+   * reach the IdP via a different (e.g. internal) network URL than the public issuer in the JWT.
+   */
+  discoveryBaseUrl?: string;
   /** Optional audience required on access tokens. */
   audience?: string;
+  /** Explicit JWKS URI to fetch signing keys from (skips discovery). Use when the caller
+   * must fetch keys from an internal URL while validating the public issuer in the JWT. */
+  jwksUri?: string;
   /**
    * Claim that carries space-delimited `scope:role` grants, e.g. `ashlands:write demo:read`.
    * Defaults to `agentdox:scopes`.
@@ -44,11 +52,15 @@ export class OidcAuthProvider implements AuthProvider {
 
   /** Perform OIDC discovery (RFC 8414) and construct a provider bound to the issuer's JWKS. */
   static async create(opts: OidcAuthProviderOptions): Promise<OidcAuthProvider> {
+    if (opts.jwksUri) {
+      return new OidcAuthProvider(opts, opts.jwksUri);
+    }
     const fetchImpl = opts.fetchImpl ?? fetch;
-    const discoveryUrl = `${opts.issuer.replace(/\/$/, '')}/.well-known/openid-configuration`;
+    const base = (opts.discoveryBaseUrl ?? opts.issuer).replace(/\/$/, '');
+    const discoveryUrl = `${base}/.well-known/openid-configuration`;
     const res = await fetchImpl(discoveryUrl);
     if (!res.ok) {
-      throw new Error(`OIDC discovery failed (${res.status}) for ${discoveryUrl}`);
+      throw new Error(`OIDC discovery failed (${res.status}) for ${opts.issuer} via ${discoveryUrl}`);
     }
     const discovery = (await res.json()) as DiscoveryDoc;
     if (!discovery.jwks_uri) throw new Error(`OIDC discovery missing jwks_uri for ${opts.issuer}`);

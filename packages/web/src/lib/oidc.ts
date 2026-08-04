@@ -1,0 +1,53 @@
+import { config } from './config';
+
+const b64url = (buf: ArrayBuffer | Uint8Array): string => {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+
+const sha256 = async (s: string): Promise<ArrayBuffer> =>
+  crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+
+/** Start the Authorization Code + PKCE flow against the configured OIDC issuer. */
+export async function startLogin(): Promise<void> {
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  sessionStorage.setItem('agentdox:pkce_verifier', verifier);
+  const challenge = b64url(await sha256(verifier));
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: config.oidcClientId,
+    redirect_uri: config.redirectUri,
+    scope: 'openid agentdox',
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state: 'agentdox',
+  });
+  window.location.href = `${config.oidcIssuer}/protocol/openid-connect/auth?${params.toString()}`;
+}
+
+/** If the current URL carries an auth code, exchange it for an access token. Returns token or null. */
+export async function handleLoginRedirect(): Promise<string | null> {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get('code');
+  if (!code) return null;
+  const verifier = sessionStorage.getItem('agentdox:pkce_verifier') ?? '';
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: config.oidcClientId,
+    code,
+    redirect_uri: config.redirectUri,
+    code_verifier: verifier,
+  });
+  const res = await fetch(`${config.oidcIssuer}/protocol/openid-connect/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  const j = (await res.json()) as { access_token?: string; error_description?: string };
+  if (!res.ok || !j.access_token) throw new Error(j.error_description ?? 'OIDC token exchange failed');
+  // strip the ?code&state from the URL and return to a clean hash route
+  window.history.replaceState({}, '', url.origin + url.pathname);
+  return j.access_token;
+}

@@ -25,12 +25,16 @@ services:
       PORT: "3003"
       AGENTDOX_AUTH_ENABLED: "${AGENTDOX_AUTH_ENABLED:-true}"
       AGENTDOX_ADMIN_TOKEN: "${AGENTDOX_ADMIN_TOKEN:?set AGENTDOX_ADMIN_TOKEN in deploy/.env}"
-      # Reach Keycloak via compose service DNS (consistent issuer for in-network OIDC).
-      # For host/browser access, use the proxy profile (compose.proxy.yml) with a public hostname.
-      AGENTDOX_OIDC_ISSUER: "http://keycloak:8080/realms/agentdox"
+      # Single issuer = browser-visible URL. Keys are fetched via host.docker.internal
+      # (browser and container resolve the same issuer; different reachability).
+      AGENTDOX_OIDC_ISSUER: "http://localhost:8080/realms/agentdox"
+      AGENTDOX_OIDC_JWKS_URI: "http://host.docker.internal:8080/realms/agentdox/protocol/openid-connect/certs"
       AGENTDOX_OIDC_CLIENT_ID: "${AGENTDOX_OIDC_CLIENT_ID:-agentdox-server}"
       AGENTDOX_OIDC_CLIENT_SECRET: "${AGENTDOX_OIDC_CLIENT_SECRET:-agentdox-server-dev-secret}"
       AGENTDOX_OIDC_AUDIENCE: "${AGENTDOX_OIDC_AUDIENCE:-}"
+    # Access host-published Keycloak for JWKS.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${AGENTDOX_PORT:-3003}:3003"
     volumes:
@@ -55,6 +59,10 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_ADMIN:-admin}"
       KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in deploy/.env}"
       KC_HEALTH_ENABLED: "true"
+      # Force a single issuer (http://localhost:8080/realms/agentdox) so browser and
+      # in-container tokens validate identically against agentdox.
+      KC_HOSTNAME: "localhost"
+      KC_HOSTNAME_PORT: "8080"
     ports:
       - "8080:8080"
     volumes:
