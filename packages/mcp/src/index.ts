@@ -19,7 +19,9 @@ const server = new McpServer(
 /** Build an MCP text content block. */
 const block = (text: string) => ({ type: 'text' as const, text });
 const ok = (text: string, structuredContent?: unknown) =>
-  structuredContent === undefined ? { content: [block(text)] } : { content: [block(text)], structuredContent };
+  structuredContent === undefined
+    ? { content: [block(text)] }
+    : { content: [block(text)], structuredContent: structuredContent as Record<string, unknown> };
 
 // ---------- Memory ----------
 server.registerTool(
