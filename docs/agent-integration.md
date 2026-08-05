@@ -81,16 +81,18 @@ host SQLite file. It is *not* shared with a Docker-hosted web UI:
 ## CLAUDE.md snippet (drop into the agent's project-root memory file)
 
 ```markdown
-## agentdox (shared context/memory)
-- agentdox gives this repo durable memory + docs + conversation context, grouped by project.
-- Your project slug is `ashlands` — ALWAYS scope writes to it (category/scope = ashlands).
+## agentdox (shared context/memory — MANDATORY to keep updated)
+- agentdox is this repo's memory + docs system; your project slug is `ashlands` (scope writes to it).
+- Keeping agentdox current is part of completing any task, not optional. Before finishing a task,
+  make sure the memory and docs you touched are up to date and nothing is stale.
 - On startup, run `project_ensure` (slug `ashlands`) before doing memory/docs work.
-- Memory: `memory_add` compact high-signal facts (prefer editing over adding dups).
-- Docs: `docs_write`/`docs_read` versioned markdown (guides, decisions, architecture).
-- Sessions: `session_start`/`session_append` record a working conversation.
-- Context: `context_assemble` pulls relevant memory+docs+history into a prompt block — call it
-  when you need prior decisions or constraints, don't ask the user to repeat them.
-- Keep the user's stated preferences and corrections in memory so you don't re-ask.
+- Memory: `memory_add`/**`memory_update`** compact high-signal facts; when a fact changes, update the
+  existing entry (never leave stale/contradictory facts). Record user preferences/corrections.
+- Docs: `docs_write`/**`docs_update`** — keep architecture, decisions, conventions current as reality
+  changes; writing once is not enough.
+- Sessions: `session_start`/`session_append` to record the working conversation.
+- Context: **must** `context_assemble` (with a query) before re-asking the user about anything
+  already in memory/docs/history.
 ```
 
 ## SDK quick reference
@@ -110,7 +112,12 @@ await client.sessions.append(s.id, { role: 'assistant', content: '…' });
 
 ## Principles
 
-1. **Scope everything.** category/scope == project slug. Never write outside your project.
-2. **Memory is high-signal.** Compact, dedupe, prefer editing an existing entry to piling on.
-3. **Docs are versioned.** Write decisions/architecture as markdown docs; history is preserved.
-4. **Assemble on demand.** `context_assemble` replaces asking the user to repeat prior work.
+1. **Keep it current (mandatory).** Updating memory and docs is part of completing any task.
+   Refresh facts when they change; don't leave stale or contradictory entries. "Written once" is
+   not "up to date."
+2. **Scope everything.** category/scope == project slug. Never write outside your project.
+3. **Memory is high-signal.** Compact, dedupe, edit the existing entry rather than piling on.
+4. **Docs are versioned and maintained.** Write decisions/architecture as markdown and update them
+   as reality changes; history is preserved automatically.
+5. **Assemble on demand.** `context_assemble` (with a query) replaces asking the user to repeat
+   prior work.
