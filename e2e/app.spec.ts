@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 /** Full user journey: PKCE login -> memory -> docs (split editor) -> context. */
-test('user journey: login, memory, docs, context', async ({ page }) => {
+test('user journey: login, memory, docs, sessions, context, projects', async ({ page }) => {
   // --- login page ---
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Continue with Keycloak' })).toBeVisible();
@@ -42,6 +42,19 @@ test('user journey: login, memory, docs, context', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Context assembly' })).toBeVisible();
   await page.getByRole('button', { name: 'assemble' }).click();
   await expect(page.locator('.meta')).toContainText('chars:');
+
+  // --- sessions: start a session, open it, append a message ---
+  await page.getByRole('link', { name: 'Sessions' }).click();
+  await page.waitForURL(/#\/sessions/);
+  await expect(page.getByRole('heading', { name: /Sessions/ })).toBeVisible();
+  const sTitle = `e2e session ${Date.now()}`;
+  await page.fill('[placeholder="new session title…"]', sTitle);
+  await page.getByRole('button', { name: /start session/ }).click();
+  await expect(page.locator('.list li', { hasText: sTitle })).toBeVisible();
+  await page.locator('.list li', { hasText: sTitle }).click();
+  await page.fill('[placeholder="append a message…"]', 'hello from e2e');
+  await page.getByRole('button', { name: 'send' }).click();
+  await expect(page.locator('.msgs .msg', { hasText: 'hello from e2e' })).toBeVisible();
 
   // --- projects: provision a project, receive a scoped token (shown once) ---
   await page.getByRole('link', { name: 'Projects' }).click();

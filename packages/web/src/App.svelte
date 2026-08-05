@@ -5,6 +5,7 @@
   import Login from './views/Login.svelte';
   import Memory from './views/Memory.svelte';
   import Docs from './views/Docs.svelte';
+  import Sessions from './views/Sessions.svelte';
   import Context from './views/Context.svelte';
   import Projects from './views/Projects.svelte';
 
@@ -45,6 +46,7 @@
     ['/projects', 'Projects'],
     ['/memory', 'Memory'],
     ['/docs', 'Docs'],
+    ['/sessions', 'Sessions'],
     ['/context', 'Context'],
   ] as const;
 </script>
@@ -77,6 +79,8 @@
       <Projects />
     {:else if route === '/docs'}
       <Docs />
+    {:else if route === '/sessions'}
+      <Sessions />
     {:else if route === '/context'}
       <Context />
     {:else}
