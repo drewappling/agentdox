@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { auth, setToken } from './lib/store.svelte';
+  import { auth, setToken, currentProject, setCurrentProject, api } from './lib/store.svelte';
   import { handleLoginRedirect } from './lib/oidc';
   import Login from './views/Login.svelte';
   import Memory from './views/Memory.svelte';
@@ -10,6 +10,23 @@
 
   const readHash = () => (window.location.hash.replace(/^#/, '').split('?')[0] || '/memory');
   let route = $state(readHash());
+  let projects = $state<Array<Record<string, any>>>([]);
+
+  // Load the project list when signed in; drop the selection if the project disappears.
+  $effect(() => {
+    if (!auth.token) {
+      projects = [];
+      setCurrentProject(null);
+      return;
+    }
+    api()
+      .projects.list()
+      .then((list) => {
+        projects = list;
+        if (currentProject.slug && !list.some((p) => p.slug === currentProject.slug)) setCurrentProject(null);
+      })
+      .catch(() => { /* list may be restricted; keep going */ });
+  });
 
   const onHash = () => (route = readHash());
 
@@ -37,6 +54,17 @@
 {:else}
   <header class="bar">
     <span class="logo"><strong>agentdox</strong></span>
+    <select
+      class="proj"
+      value={currentProject.slug ?? ''}
+      onchange={(e) => setCurrentProject((e.currentTarget as HTMLSelectElement).value || null)}
+      title="Filter the whole UI to one project/scope"
+    >
+      <option value="">all scopes</option>
+      {#each projects as p (p.slug)}
+        <option value={p.slug}>{p.name}</option>
+      {/each}
+    </select>
     <nav>
       {#each nav as [r, label]}
         <a href="#{r}" class:active={route === r}>{label}</a>
@@ -76,6 +104,10 @@
     z-index: 5;
   }
   .logo { color: #9aa4ff; letter-spacing: 0.3px; }
+  .proj {
+    background: #0f1117; color: #e6e8ee; border: 1px solid #333a4d; border-radius: 6px;
+    padding: 5px 8px; font-size: 13px; max-width: 180px;
+  }
   nav { display: flex; gap: 4px; flex: 1; }
   nav a {
     color: #aab; text-decoration: none; padding: 6px 12px; border-radius: 6px;

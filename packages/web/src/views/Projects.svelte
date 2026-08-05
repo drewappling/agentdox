@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '../lib/store.svelte';
+  import { api, currentProject, setCurrentProject } from '../lib/store.svelte';
 
   let projects = $state<Array<Record<string, any>>>([]);
   let name = $state('');
@@ -20,6 +20,18 @@
       if (mine === seq) projects = r;
     } catch (e) {
       if (mine === seq) error = (e as Error).message;
+    }
+  }
+
+  async function remove(slugToDelete: string) {
+    if (!confirm(`Delete project "${slugToDelete}" and ALL of its memory/docs/sessions? This cannot be undone.`)) return;
+    error = '';
+    try {
+      await api().projects.remove(slugToDelete);
+      if (currentProject.slug === slugToDelete) setCurrentProject(null);
+      await load();
+    } catch (e) {
+      error = (e as Error).message;
     }
   }
 
@@ -71,7 +83,10 @@
 
 <ul class="projs">
   {#each projects as p (p.id)}
-    <li><span class="slug">{p.slug}</span><span class="name">{p.name}</span>{#if p.description}<span class="desc">{p.description}</span>{/if}<span class="when">{p.createdAt?.slice(0, 10)}</span></li>
+    <li class:active={currentProject.slug === p.slug}>
+      <span class="slug">{p.slug}</span><span class="name">{p.name}</span>{#if p.description}<span class="desc">{p.description}</span>{/if}<span class="when">{p.createdAt?.slice(0, 10)}</span>
+      <button class="del" title="Delete project" onclick={() => remove(p.slug)}>delete</button>
+    </li>
   {/each}
   {#if projects.length === 0}<li class="empty">No projects yet.</li>{/if}
 </ul>
@@ -88,10 +103,13 @@
   button { background: #4f5bd5; color: #fff; border: none; border-radius: 8px; padding: 9px 14px; cursor: pointer; }
   .projs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .projs li { display: flex; gap: 14px; align-items: baseline; background: #151823; border: 1px solid #262a36; border-radius: 8px; padding: 10px 14px; }
+  .projs li.active { border-color: #4f5bd5; }
   .projs .slug { color: #9aa4ff; font-weight: 600; }
   .projs .name { color: #e6e8ee; }
   .projs .desc { color: #889; font-size: 13px; flex: 1; }
   .projs .when { color: #556; font-size: 12px; margin-left: auto; }
+  .projs button.del { background: transparent; color: #ff6b6b; border: 1px solid #5a2b33; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; margin-left: 8px; }
+  .projs button.del:hover { background: #5a2b33; }
   .empty { color: #556; }
   .err { color: #ff6b6b; }
 </style>

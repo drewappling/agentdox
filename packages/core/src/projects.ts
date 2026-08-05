@@ -56,4 +56,17 @@ export class ProjectService {
       .run(id, input.slug, input.name, input.description ?? null, input.ownerSub ?? null, nowIso());
     return this.get(input.slug) as Project;
   }
+
+  /**
+   * Delete a project and all of its scoped data (memory, docs+versions, sessions+messages
+   * keyed by that scope). Returns true if a project existed.
+   */
+  remove(slug: string): boolean {
+    if (!this.get(slug)) return false;
+    this.store.db.prepare('DELETE FROM memory WHERE category = ?').run(slug);
+    this.store.db.prepare('DELETE FROM docs WHERE scope = ?').run(slug); // cascades doc_versions
+    this.store.db.prepare('DELETE FROM sessions WHERE scope = ?').run(slug); // cascades messages
+    this.store.db.prepare('DELETE FROM projects WHERE slug = ?').run(slug);
+    return true;
+  }
 }

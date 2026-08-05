@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '../lib/store.svelte';
+  import { api, currentProject } from '../lib/store.svelte';
   import { renderMarkdown } from '../lib/markdown';
 
   let docs = $state<Array<Record<string, any>>>([]);
@@ -13,6 +13,16 @@
   let newSlug = $state('');
   let newTitle = $state('');
   let seq = 0;
+
+  // Filter to the selected project when one is active.
+  $effect(() => {
+    const s = currentProject.slug;
+    if (s && scope !== s) {
+      scope = s;
+      current = null;
+      void load();
+    }
+  });
 
   async function load() {
     const mine = ++seq;

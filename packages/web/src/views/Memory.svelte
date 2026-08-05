@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '../lib/store.svelte';
+  import { api, currentProject } from '../lib/store.svelte';
 
   let entries = $state<Array<Record<string, any>>>([]);
   let category = $state('demo');
@@ -8,6 +8,15 @@
   let error = $state('');
   let busy = $state(false);
   let seq = 0;
+
+  // Filter to the selected project when one is active.
+  $effect(() => {
+    const s = currentProject.slug;
+    if (s && category !== s) {
+      category = s;
+      void load();
+    }
+  });
 
   async function load() {
     const mine = ++seq;

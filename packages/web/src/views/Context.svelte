@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '../lib/store.svelte';
+  import { api, currentProject } from '../lib/store.svelte';
 
   let scope = $state('demo');
   let query = $state('');
@@ -10,6 +10,15 @@
   let slice = $state<any | null>(null);
   let error = $state('');
   let seq = 0;
+
+  // Filter to the selected project when one is active.
+  $effect(() => {
+    const s = currentProject.slug;
+    if (s && scope !== s) {
+      scope = s;
+      void run();
+    }
+  });
 
   async function run() {
     const mine = ++seq;

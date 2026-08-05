@@ -141,6 +141,22 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     return { project, token, expiresAt };
   });
 
+  app.delete('/projects/:slug', async (req, reply) => {
+    const pr = dox.projects.get((req.params as { slug: string }).slug);
+    if (!pr) return reply.code(404).send({ error: 'not_found' });
+    if (auth.enabled) {
+      const p = principalOf(req);
+      if (!p) return reply.code(401).send({ error: 'unauthorized' });
+      const owned = typeof pr.ownerSub === 'string' && pr.ownerSub === p.sub;
+      if (!scopeGrant(p, pr.slug, 'admin') && p.grants['*'] !== 'admin' && !owned) {
+        return reply.code(403).send({ error: 'forbidden', message: 'admin or owner required to delete project' });
+      }
+    }
+    // Cascade-remove the project row and all its scoped data, then invalidate any selected UI state.
+    dox.projects.remove(pr.slug);
+    return { ok: true, removed: pr.slug };
+  });
+
   // ---- Memory ----
   app.get('/memory', async (req, reply) => {
     const q = req.query as { category?: string; target?: string; tag?: string; limit?: string };
