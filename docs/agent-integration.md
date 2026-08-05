@@ -90,7 +90,8 @@ host SQLite file. It is *not* shared with a Docker-hosted web UI:
   existing entry (never leave stale/contradictory facts). Record user preferences/corrections.
 - Docs: `docs_write`/**`docs_update`** — keep architecture, decisions, conventions current as reality
   changes; writing once is not enough.
-- Sessions: `session_start`/`session_append` to record the working conversation.
+- Sessions: `session_start`/`session_append` — start a session per topic and append each
+  message **in real time** as it happens (not a batch summary), so live history feeds context.
 - Context: **must** `context_assemble` (with a query) before re-asking the user about anything
   already in memory/docs/history.
 ```
