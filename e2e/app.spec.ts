@@ -8,7 +8,7 @@ test('user journey: login, memory, docs, sessions, context, projects', async ({ 
   await page.getByRole('button', { name: 'Continue with Keycloak' }).click();
 
   // Keycloak login (separate origin)
-  await page.waitForURL(/localhost:8080/);
+  await page.waitForURL(/localhost:8090/);
   await page.fill('#username', 'drew');
   await page.fill('#password', 'demo123');
   await page.press('#password', 'Enter');

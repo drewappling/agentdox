@@ -24,7 +24,7 @@ Wait for healthy, then:
 
 ```bash
 # Keycloak admin console (bootstrap creds from .env)
-open http://localhost:8080       # admin / (your KEYCLOAK_ADMIN_PASSWORD)
+open http://localhost:8090       # admin / (your KEYCLOAK_ADMIN_PASSWORD)
 
 # agentdox API
 curl -s http://localhost:3003/health
@@ -37,7 +37,7 @@ curl -s http://localhost:3003/health
 >
 > ```bash
 > KEYCLOAK_ADMIN=admin KEYCLOAK_ADMIN_PASSWORD=admin \
->   BASE_URL=http://localhost:8080 python deploy/scripts/setup_keycloak.py
+>   BASE_URL=http://localhost:8090 python deploy/scripts/setup_keycloak.py
 > ```
 >
 > `realm-export.json` is kept as a reference only; the API script is the source of truth

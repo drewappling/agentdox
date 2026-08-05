@@ -1,7 +1,7 @@
 import base64, hashlib, os, re, urllib.parse, urllib.request
 import http.cookiejar
 
-BASE = "http://localhost:8080/realms/agentdox"
+BASE = "http://localhost:8090/realms/agentdox"
 REDIRECT = "http://localhost:5173/"
 CLIENT = "agentdox-web"
 

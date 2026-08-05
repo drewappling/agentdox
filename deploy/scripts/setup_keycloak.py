@@ -17,7 +17,7 @@ import time
 import urllib.parse
 import urllib.request
 
-BASE = os.environ.get("BASE_URL", "http://localhost:8080").rstrip("/")
+BASE = os.environ.get("BASE_URL", "http://localhost:8090").rstrip("/")
 REALM = os.environ.get("AGENTDOX_REALM", "agentdox")
 ADMIN = os.environ.get("KEYCLOAK_ADMIN", "admin")
 ADMIN_PASS = os.environ["KEYCLOAK_ADMIN_PASSWORD"]

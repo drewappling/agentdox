@@ -27,8 +27,9 @@ services:
       AGENTDOX_ADMIN_TOKEN: "${AGENTDOX_ADMIN_TOKEN:?set AGENTDOX_ADMIN_TOKEN in deploy/.env}"
       # Single issuer = browser-visible URL. Keys are fetched via host.docker.internal
       # (browser and container resolve the same issuer; different reachability).
-      AGENTDOX_OIDC_ISSUER: "http://localhost:8080/realms/agentdox"
-      AGENTDOX_OIDC_JWKS_URI: "http://host.docker.internal:8080/realms/agentdox/protocol/openid-connect/certs"
+      # KEYCLOAK_PORT is the host-published port (default 8090; was 8080 until that collided with the Unity MCP server).
+      AGENTDOX_OIDC_ISSUER: "http://localhost:${KEYCLOAK_PORT:-8090}/realms/agentdox"
+      AGENTDOX_OIDC_JWKS_URI: "http://host.docker.internal:${KEYCLOAK_PORT:-8090}/realms/agentdox/protocol/openid-connect/certs"
       AGENTDOX_OIDC_CLIENT_ID: "${AGENTDOX_OIDC_CLIENT_ID:-agentdox-server}"
       AGENTDOX_OIDC_CLIENT_SECRET: "${AGENTDOX_OIDC_CLIENT_SECRET:-agentdox-server-dev-secret}"
       AGENTDOX_OIDC_AUDIENCE: "${AGENTDOX_OIDC_AUDIENCE:-}"
@@ -66,11 +67,13 @@ services:
       # Force a single issuer (http://localhost:8080/realms/agentdox) so browser and
       # in-container tokens validate identically against agentdox.
       KC_HOSTNAME: "localhost"
-      KC_HOSTNAME_PORT: "8080"
+      KC_HOSTNAME_PORT: "${KEYCLOAK_PORT:-8090}"
     ports:
-      - "8080:8080"
+      - "${KEYCLOAK_PORT:-8090}:8080"
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
+      # Persist the realm DB (H2 under /opt/keycloak/data) across container recreates.
+      - keycloak-data:/opt/keycloak/data
     healthcheck:
       # Keycloak's image has no curl/wget; use bash /dev/tcp against the HTTP port.
       test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/8080 && echo ready"]
@@ -81,3 +84,4 @@ services:
 
 volumes:
   agentdox-data:
+  keycloak-data:

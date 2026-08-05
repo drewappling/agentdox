@@ -4,7 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const MCP = 'http://localhost:3003/mcp';
-const KC = 'http://localhost:8080/realms/agentdox';
+const KC = 'http://localhost:8090/realms/agentdox';
 const pass = (n, ok) => console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}`);
 
 // get drew's OIDC token (grants: demo:write ashlands:read)
