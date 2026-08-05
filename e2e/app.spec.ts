@@ -42,6 +42,10 @@ test('user journey: login, memory, docs, sessions, context, projects', async ({ 
   await expect(page.getByRole('heading', { name: 'Context assembly' })).toBeVisible();
   await page.getByRole('button', { name: 'assemble' }).click();
   await expect(page.locator('.meta')).toContainText('chars:');
+  // auto-context baseline: force a refresh and see the saved snapshot
+  const refreshBtn = page.getByRole('button', { name: 'refresh now' });
+  await refreshBtn.click();
+  await expect(page.locator('.snap .snap-title', { hasText: 'Saved baseline' })).toBeVisible();
 
   // --- sessions: start a session, open it, append a message ---
   await page.getByRole('link', { name: 'Sessions' }).click();

@@ -33,6 +33,8 @@ services:
       AGENTDOX_OIDC_CLIENT_ID: "${AGENTDOX_OIDC_CLIENT_ID:-agentdox-server}"
       AGENTDOX_OIDC_CLIENT_SECRET: "${AGENTDOX_OIDC_CLIENT_SECRET:-agentdox-server-dev-secret}"
       AGENTDOX_OIDC_AUDIENCE: "${AGENTDOX_OIDC_AUDIENCE:-}"
+      # Auto-context-update job (seconds between refreshes; 0 disables).
+      AGENTDOX_CONTEXT_INTERVAL_SECONDS: "${AGENTDOX_CONTEXT_INTERVAL_SECONDS:-900}"
     # Access host-published Keycloak for JWKS.
     extra_hosts:
       - "host.docker.internal:host-gateway"

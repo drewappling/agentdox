@@ -1,6 +1,7 @@
 import type {
   ContextRequest,
   ContextSlice,
+  ContextSnapshot,
   Doc,
   DocVersion,
   MemoryEntry,
@@ -122,6 +123,8 @@ export class AgentDoxClient {
   // ---- Context ----
   context = {
     assemble: (req: ContextRequest) => this.request<ContextSlice>('POST', '/context/assemble', req),
+    snapshot: (scope: string) => this.request<ContextSnapshot>('GET', `/context/snapshot?scope=${encodeURIComponent(scope)}`),
+    refresh: (scope: string) => this.request<ContextSnapshot>('POST', '/context/refresh', { scope }),
   };
 
   // ---- Projects (agent-provisioned workspaces) ----

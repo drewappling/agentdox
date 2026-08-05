@@ -2,6 +2,8 @@ import type { ContextRequest, ContextSlice, MemoryHit } from '@agentdox/types';
 import { DocService } from './docs.js';
 import { MemoryService } from './memory.js';
 import { SessionService } from './sessions.js';
+import type { Store } from './db.js';
+import { newId, nowIso } from './util.js';
 
 const DEFAULT_MEMORY_LIMIT = 15;
 const DEFAULT_DOCS_LIMIT = 3;
@@ -10,10 +12,23 @@ const DEFAULT_MIN_IMPORTANCE = 0.7;
 /** Long docs are trimmed so they don't blow the context budget. */
 const MAX_DOC_CHARS = 2000;
 
+/** A persisted, auto-refreshed context baseline for one scope/project. */
+export interface ContextSnapshot {
+  scope: string;
+  query: string;
+  prompt: string;
+  chars: number;
+  memoryHits: number;
+  docs: number;
+  sessionMsgs: number;
+  assembledAt: string;
+}
+
 export interface ContextAssemblerDeps {
   memory: MemoryService;
   docs: DocService;
   sessions: SessionService;
+  store: Store;
 }
 
 export class ContextService {
@@ -82,6 +97,65 @@ export class ContextService {
       prompt,
       chars: prompt.length,
     };
+  }
+
+  /** Assemble + persist a context baseline for a scope (auto-context-update job). */
+  saveSnapshot(scope: string, query = ''): ContextSnapshot {
+    const s = this.assemble({ scope, query });
+    const snap: ContextSnapshot = {
+      scope,
+      query,
+      prompt: s.prompt,
+      chars: s.chars,
+      memoryHits: s.memory.length,
+      docs: s.docs.length,
+      sessionMsgs: s.sessionMessages.length,
+      assembledAt: new Date().toISOString(),
+    };
+    this.deps.store.db
+      .prepare(
+        `INSERT INTO context_snapshots (id, scope, query, prompt, chars, memory_hits, docs_count, session_msgs, assembled_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope) DO UPDATE SET
+           query=excluded.query, prompt=excluded.prompt, chars=excluded.chars,
+           memory_hits=excluded.memory_hits, docs_count=excluded.docs_count,
+           session_msgs=excluded.session_msgs, assembled_at=excluded.assembled_at`,
+      )
+      .run(newId('snap'), scope, query, snap.prompt, snap.chars, snap.memoryHits, snap.docs, snap.sessionMsgs, snap.assembledAt);
+    return snap;
+  }
+
+  /** Read the latest persisted context snapshot for a scope, or null. */
+  getSnapshot(scope: string): ContextSnapshot | null {
+    const r = this.deps.store.db
+      .prepare('SELECT scope, query, prompt, chars, memory_hits, docs_count, session_msgs, assembled_at FROM context_snapshots WHERE scope = ?')
+      .get(scope) as Record<string, unknown> | undefined;
+    if (!r) return null;
+    return {
+      scope: r.scope as string,
+      query: r.query as string,
+      prompt: r.prompt as string,
+      chars: r.chars as number,
+      memoryHits: r.memory_hits as number,
+      docs: r.docs_count as number,
+      sessionMsgs: r.session_msgs as number,
+      assembledAt: r.assembled_at as string,
+    };
+  }
+
+  /** Distinct scopes that hold any context-bearing data or a project row (scheduler targets). */
+  targetScopes(): string[] {
+    const rows = this.deps.store.db
+      .prepare(
+        `SELECT scope FROM (
+           SELECT DISTINCT category AS scope FROM memory
+           UNION SELECT DISTINCT scope FROM docs
+           UNION SELECT DISTINCT scope FROM sessions
+           UNION SELECT DISTINCT slug AS scope FROM projects
+         ) WHERE scope IS NOT NULL AND scope != ''`,
+      )
+      .all() as { scope: string }[];
+    return rows.map((r) => r.scope);
   }
 
   private render(ctx: {

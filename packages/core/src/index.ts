@@ -12,6 +12,7 @@ export { MemoryService } from './memory.js';
 export { DocService } from './docs.js';
 export { SessionService } from './sessions.js';
 export { ContextService } from './context.js';
+export type { ContextSnapshot } from './context.js';
 export { PatService } from './pat.js';
 export { ProjectService } from './projects.js';
 export { newId, nowIso, relevanceScore, tokenize } from './util.js';
@@ -31,7 +32,7 @@ export class AgentDox {
     this.memory = new MemoryService(this.store);
     this.docs = new DocService(this.store);
     this.sessions = new SessionService(this.store);
-    this.context = new ContextService({ memory: this.memory, docs: this.docs, sessions: this.sessions });
+    this.context = new ContextService({ memory: this.memory, docs: this.docs, sessions: this.sessions, store: this.store });
     this.pat = new PatService(this.store);
     this.projects = new ProjectService(this.store);
   }

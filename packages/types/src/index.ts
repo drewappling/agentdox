@@ -112,6 +112,18 @@ export interface ContextSlice {
   chars: number;
 }
 
+/** A persisted, auto-refreshed context baseline for one scope/project (auto-context job). */
+export interface ContextSnapshot {
+  scope: string;
+  query: string;
+  prompt: string;
+  chars: number;
+  memoryHits: number;
+  docs: number;
+  sessionMsgs: number;
+  assembledAt: string;
+}
+
 // ---- Projects ----
 
 /**

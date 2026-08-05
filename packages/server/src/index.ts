@@ -351,6 +351,23 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     return dox.context.assemble({ ...req.body, scope });
   });
 
+  // Latest auto-refreshed context baseline for a scope.
+  app.get('/context/snapshot', async (req, reply) => {
+    const scope = (req.query as { scope?: string }).scope ?? '';
+    if (scope && !guard(req, reply, auth, principalOf(req), scope, 'read')) return;
+    const snap = dox.context.getSnapshot(scope);
+    if (!snap) return reply.code(404).send({ error: 'no_snapshot' });
+    return snap;
+  });
+
+  // Force-refresh + persist the context baseline now.
+  app.post<{ Body: { scope?: string } }>('/context/refresh', async (req, reply) => {
+    const scope = req.body?.scope;
+    if (!scope) return reply.code(400).send({ error: 'scope_required' });
+    if (!guard(req, reply, auth, principalOf(req), scope, 'write')) return;
+    return dox.context.saveSnapshot(scope);
+  });
+
   // ---- MCP over HTTP (streamable transport, one authenticated session per bearer token) ----
   const mcpSessions = new Map<string, { transport: StreamableHTTPServerTransport; close: () => void }>();
   const mcpErr = (res: ServerResponse, status: number, message: string) => {
@@ -411,7 +428,41 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   return { app, dox, auth };
 }
 
-export async function startServer(opts: BuildOptions & { port?: number } = {}): Promise<{ app: FastifyInstance; dox: AgentDox; auth: AuthContext; port: number }> {
+/**
+ * Auto-context-update job: periodically reassemble + persist each active scope's context
+ * baseline. Controlled by AGENTDOX_CONTEXT_AUTOUPDATE / AGENTDOX_CONTEXT_INTERVAL_SECONDS
+ * / AGENTDOX_CONTEXT_MAX_SCOPES (default 900s=15min, 50 scopes). Returns null when disabled.
+ */
+function startContextScheduler(dox: AgentDox): { intervalSeconds: number; stop: () => void } | null {
+  const seconds = parseInt(process.env.AGENTDOX_CONTEXT_INTERVAL_SECONDS ?? '900', 10);
+  const maxScopes = parseInt(process.env.AGENTDOX_CONTEXT_MAX_SCOPES ?? '50', 10);
+  if (!(seconds > 0)) return null; // 0 / negative disables
+
+  const runOnce = async () => {
+    try {
+      const scopes = dox.context.targetScopes().slice(0, maxScopes);
+      let refreshed = 0;
+      for (const scope of scopes) {
+        try {
+          dox.context.saveSnapshot(scope);
+          refreshed++;
+        } catch (e) {
+          console.error(`[ctxjob] ${scope}: ${(e as Error).message}`);
+        }
+      }
+      if (refreshed > 0) console.log(`[ctxjob] refreshed ${refreshed}/${scopes.length} scope(s)`);
+    } catch (e) {
+      console.error('[ctxjob] tick failed', (e as Error).message);
+    }
+  };
+
+  void runOnce(); // refresh immediately on boot, then on the interval
+  const timer = setInterval(() => void runOnce(), seconds * 1000);
+  timer.unref?.();
+  return { intervalSeconds: seconds, stop: () => clearInterval(timer) };
+}
+
+export async function startServer(opts: BuildOptions & { port?: number } = {}): Promise<{ app: FastifyInstance; dox: AgentDox; auth: AuthContext; port: number; stopScheduler: () => void }> {
   const { app, dox, auth } = buildApp(opts);
   const port = opts.port ?? 3003;
   // Wait for async OIDC discovery to finish before listening.
@@ -423,14 +474,18 @@ export async function startServer(opts: BuildOptions & { port?: number } = {}): 
   await app.listen({ port, host: '0.0.0.0' });
   // Report the actual bound port (matters when port === 0 / ephemeral).
   const actualPort = (app.server.address() as import('node:net').AddressInfo).port;
-  return { app, dox, auth, port: actualPort };
+  // Start the periodic auto-context job.
+  const sched = startContextScheduler(dox);
+  console.log(`[agentdox] auto-context job: ${sched ? `every ${sched.intervalSeconds}s` : 'disabled'}`);
+  return { app, dox, auth, port: actualPort, stopScheduler: sched ? sched.stop : () => undefined };
 }
 
 // Direct execution
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3003;
-  const { app, dox, port: p } = await startServer({ port });
+  const { app, dox, port: p, stopScheduler } = await startServer({ port });
   const shutdown = () => {
+    stopScheduler();
     app.close().then(() => {
       dox.close();
       process.exit(0);

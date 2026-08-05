@@ -75,6 +75,18 @@ CREATE TABLE IF NOT EXISTS projects (
   owner_sub   TEXT,
   created_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS context_snapshots (
+  id            TEXT PRIMARY KEY,
+  scope         TEXT NOT NULL UNIQUE,
+  query         TEXT NOT NULL DEFAULT '',
+  prompt        TEXT NOT NULL,
+  chars         INTEGER NOT NULL,
+  memory_hits   INTEGER NOT NULL DEFAULT 0,
+  docs_count    INTEGER NOT NULL DEFAULT 0,
+  session_msgs  INTEGER NOT NULL DEFAULT 0,
+  assembled_at  TEXT NOT NULL
+);
 `;
 
 export interface Store {
