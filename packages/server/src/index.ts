@@ -335,6 +335,14 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     return dox.sessions.end(s.id);
   });
 
+  app.delete('/sessions/:id', async (req, reply) => {
+    const s = dox.sessions.get((req.params as { id: string }).id);
+    if (!s) return reply.code(404).send({ error: 'not_found' });
+    if (!guard(req, reply, auth, principalOf(req), s.scope, 'admin')) return;
+    dox.sessions.remove(s.id);
+    return { ok: true, removed: s.id };
+  });
+
   // ---- Context ----
   app.post<{ Body: ContextRequest }>('/context/assemble', async (req, reply) => {
     const scope = req.body?.scope;

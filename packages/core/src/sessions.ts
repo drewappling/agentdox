@@ -92,6 +92,12 @@ export class SessionService {
     return this.get(sessionId);
   }
 
+  /** Permanently delete a session and its messages (cascades via FK). */
+  remove(sessionId: string): boolean {
+    const res = this.store.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    return res.changes > 0;
+  }
+
   /** Latest messages across a scope, newest first (for context assembly). */
   recentMessages(scope: string, limit = 20): SessionMessage[] {
     const rows = this.store.db

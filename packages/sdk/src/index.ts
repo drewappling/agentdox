@@ -116,6 +116,7 @@ export class AgentDoxClient {
     append: (id: string, msg: { role: SessionMessage['role']; content: string; refs?: string[] }) =>
       this.request<SessionMessage>('POST', `/sessions/${id}/messages`, msg),
     end: (id: string) => this.request<Session>('POST', `/sessions/${id}/end`),
+    remove: (id: string) => this.request<{ ok: boolean; removed: string }>('DELETE', `/sessions/${id}`),
   };
 
   // ---- Context ----
