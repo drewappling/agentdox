@@ -46,6 +46,13 @@ test('user journey: login, memory, docs, sessions, context, projects', async ({ 
   const refreshBtn = page.getByRole('button', { name: 'refresh now' });
   await refreshBtn.click();
   await expect(page.locator('.snap .snap-title', { hasText: 'Saved baseline' })).toBeVisible();
+  // project brief: seed + record a decision, see it in the log
+  await page.getByRole('button', { name: 'seed from memory/docs' }).click();
+  await page.getByRole('heading', { name: /Project brief/ }).scrollIntoViewIfNeeded();
+  await page.fill('[placeholder="decision title"]', 'E2E decision');
+  await page.fill('[placeholder="the decision / convention"]', 'e2e convention');
+  await page.getByRole('button', { name: 'record' }).click();
+  await expect(page.locator('.decs li', { hasText: 'E2E decision' })).toBeVisible();
 
   // --- sessions: start a session, open it, append a message ---
   await page.getByRole('link', { name: 'Sessions' }).click();

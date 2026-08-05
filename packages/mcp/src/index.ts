@@ -296,5 +296,88 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     },
   );
 
+  // ---------- Historic project brief ----------
+  server.registerTool(
+    'context_brief',
+    {
+      title: 'Read project brief',
+      description:
+        'Read the historic, cumulative on-ramp for a project/scope: overview, repo layout & tooling, ' +
+        'code style, build & test, asset conventions, gotchas, and the decision log. Read this when first ' +
+        'starting on a project to onboard without rediscovering decisions or conventions.',
+      inputSchema: { scope: z.string() },
+    },
+    async ({ scope }) => {
+      if (!can(principal, scope, 'read')) return deny(GROUP_MSG(scope, 'read'));
+      const brief = dox.context.getBrief(scope);
+      if (!brief) {
+        return ok(
+          `No historic brief yet for '${scope}'. Run context_brief_seed to build one from current memory/docs, ` +
+            `or record decisions with context_brief_record as they're made.`,
+          {},
+        );
+      }
+      const lines = [
+        `# Project brief: ${scope}`,
+        `(updated ${brief.updatedAt})`,
+        '',
+        `## Overview`,
+        brief.overview || '(none)',
+        '',
+        `## Repo layout & tooling`,
+        brief.repoLayout || '(none)',
+        '',
+        `## Code style`,
+        brief.codeStyle || '(none)',
+        '',
+        `## Build & test`,
+        brief.buildTest || '(none)',
+        '',
+        `## Asset / art conventions`,
+        brief.assetConventions || '(none)',
+        '',
+        `## Gotchas`,
+        brief.gotchas || '(none)',
+        '',
+        `## Decision log`,
+        ...(brief.decisionLog.length
+          ? brief.decisionLog.map((d) => `- [${d.at}] ${d.title}: ${d.decision}${d.rationale ? ` (${d.rationale})` : ''}`)
+          : ['(none recorded yet)']),
+      ];
+      return ok(lines.join('\n'), { decisionCount: brief.decisionLog.length });
+    },
+  );
+
+  server.registerTool(
+    'context_brief_record',
+    {
+      title: 'Record project decision',
+      description:
+        'Append a decision/convention to a project\'s historic brief (title, the decision, optional rationale). ' +
+        'Record decisions and conventions as they are made so the brief is the cumulative history a new agent reads.',
+      inputSchema: { scope: z.string(), title: z.string(), decision: z.string(), rationale: z.string().optional() },
+    },
+    async ({ scope, title, decision, rationale }) => {
+      if (!can(principal, scope, 'write')) return deny(GROUP_MSG(scope, 'write'));
+      if (!title || !decision) return { isError: true, content: [block('title and decision are required')] };
+      const brief = dox.context.addDecision(scope, { title, decision, rationale });
+      return ok(`Recorded decision in '${scope}' (${brief.decisionLog.length} total)`, { decisionCount: brief.decisionLog.length });
+    },
+  );
+
+  server.registerTool(
+    'context_brief_seed',
+    {
+      title: 'Seed project brief',
+      description: 'Build/seed a project brief from its current top memory and docs (keeps any existing decision log).',
+      inputSchema: { scope: z.string() },
+    },
+    async ({ scope }) => {
+      if (!can(principal, scope, 'write')) return deny(GROUP_MSG(scope, 'write'));
+      const brief = dox.context.seedBrief(scope);
+      return ok(`Seeded brief for '${scope}' from current memory/docs`, { decisionCount: brief.decisionLog.length });
+    },
+  );
+
   return server;
 }

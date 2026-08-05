@@ -368,6 +368,36 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     return dox.context.saveSnapshot(scope);
   });
 
+  // ---- Historic project context ("the brief") ----
+  app.get('/context/brief', async (req, reply) => {
+    const scope = (req.query as { scope?: string }).scope ?? '';
+    if (scope && !guard(req, reply, auth, principalOf(req), scope, 'read')) return;
+    const brief = dox.context.getBrief(scope);
+    if (!brief) return reply.code(404).send({ error: 'no_brief' });
+    return brief;
+  });
+
+  app.put<{ Body: { scope?: string; overview?: string; repoLayout?: string; codeStyle?: string; buildTest?: string; assetConventions?: string; gotchas?: string } }>('/context/brief', async (req, reply) => {
+    const scope = req.body?.scope;
+    if (!scope) return reply.code(400).send({ error: 'scope_required' });
+    if (!guard(req, reply, auth, principalOf(req), scope, 'write')) return;
+    return dox.context.saveBrief(scope, req.body ?? {});
+  });
+
+  app.post<{ Body: { scope?: string; title?: string; decision?: string; rationale?: string } }>('/context/brief/decision', async (req, reply) => {
+    const { scope, title, decision, rationale } = req.body ?? {};
+    if (!scope || !title || !decision) return reply.code(400).send({ error: 'scope_title_decision_required' });
+    if (!guard(req, reply, auth, principalOf(req), scope, 'write')) return;
+    return dox.context.addDecision(scope, { title, decision, rationale });
+  });
+
+  app.post<{ Body: { scope?: string } }>('/context/brief/seed', async (req, reply) => {
+    const scope = req.body?.scope;
+    if (!scope) return reply.code(400).send({ error: 'scope_required' });
+    if (!guard(req, reply, auth, principalOf(req), scope, 'write')) return;
+    return dox.context.seedBrief(scope);
+  });
+
   // ---- MCP over HTTP (streamable transport, one authenticated session per bearer token) ----
   const mcpSessions = new Map<string, { transport: StreamableHTTPServerTransport; close: () => void }>();
   const mcpErr = (res: ServerResponse, status: number, message: string) => {

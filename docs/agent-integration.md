@@ -86,6 +86,11 @@ host SQLite file. It is *not* shared with a Docker-hosted web UI:
 - Keeping agentdox current is part of completing any task, not optional. Before finishing a task,
   make sure the memory and docs you touched are up to date and nothing is stale.
 - On startup, run `project_ensure` (slug `ashlands`) before doing memory/docs work.
+- **Onboard on connect:** read `context_brief` (scope = project slug) when first starting — it holds the
+  project's historic on-ramp (overview, repo layout & tooling, code style, build/test, asset
+  conventions, gotchas, decision log). Don't rediscover what's already recorded.
+- **Record decisions as they're made:** append decisions & conventions via `context_brief_record`
+  (title, decision, rationale) so the brief accumulates the project's real history for the next agent.
 - Memory: `memory_add`/**`memory_update`** compact high-signal facts; when a fact changes, update the
   existing entry (never leave stale/contradictory facts). Record user preferences/corrections.
 - Docs: `docs_write`/**`docs_update`** — keep architecture, decisions, conventions current as reality

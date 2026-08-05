@@ -12,7 +12,7 @@ export { MemoryService } from './memory.js';
 export { DocService } from './docs.js';
 export { SessionService } from './sessions.js';
 export { ContextService } from './context.js';
-export type { ContextSnapshot } from './context.js';
+export type { ContextSnapshot, ProjectBrief, DecisionEntry } from './context.js';
 export { PatService } from './pat.js';
 export { ProjectService } from './projects.js';
 export { newId, nowIso, relevanceScore, tokenize } from './util.js';

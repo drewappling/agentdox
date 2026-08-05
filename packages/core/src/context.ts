@@ -24,6 +24,28 @@ export interface ContextSnapshot {
   assembledAt: string;
 }
 
+/** One entry in the project's historic decision/convention log. */
+export interface DecisionEntry {
+  id: string;
+  title: string;
+  decision: string;
+  rationale: string;
+  at: string;
+}
+
+/** The durable, cumulative on-ramp ("historic context") for a project/scope. */
+export interface ProjectBrief {
+  scope: string;
+  overview: string;
+  repoLayout: string;
+  codeStyle: string;
+  buildTest: string;
+  assetConventions: string;
+  gotchas: string;
+  decisionLog: DecisionEntry[];
+  updatedAt: string;
+}
+
 export interface ContextAssemblerDeps {
   memory: MemoryService;
   docs: DocService;
@@ -156,6 +178,101 @@ export class ContextService {
       )
       .all() as { scope: string }[];
     return rows.map((r) => r.scope);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Historic project context ("the brief") — the durable on-ramp an agent reads
+  // when first starting on a project: decisions, repo/code conventions, gotchas.
+  // ---------------------------------------------------------------------------
+
+  emptyBrief(scope: string): ProjectBrief {
+    return {
+      scope,
+      overview: '',
+      repoLayout: '',
+      codeStyle: '',
+      buildTest: '',
+      assetConventions: '',
+      gotchas: '',
+      decisionLog: [],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  getBrief(scope: string): ProjectBrief | null {
+    const r = this.deps.store.db.prepare('SELECT brief_json FROM context_briefs WHERE scope = ?').get(scope) as { brief_json: string } | undefined;
+    if (!r) return null;
+    try {
+      const b = JSON.parse(r.brief_json) as ProjectBrief;
+      if (!Array.isArray(b.decisionLog)) b.decisionLog = [];
+      return b;
+    } catch {
+      return this.emptyBrief(scope);
+    }
+  }
+
+  /** Write the full brief (sections are replaced; the decision log is preserved unless provided). */
+  saveBrief(scope: string, partial: Partial<ProjectBrief>): ProjectBrief {
+    const prev = this.getBrief(scope) ?? this.emptyBrief(scope);
+    const brief: ProjectBrief = {
+      scope,
+      overview: partial.overview ?? prev.overview,
+      repoLayout: partial.repoLayout ?? prev.repoLayout,
+      codeStyle: partial.codeStyle ?? prev.codeStyle,
+      buildTest: partial.buildTest ?? prev.buildTest,
+      assetConventions: partial.assetConventions ?? prev.assetConventions,
+      gotchas: partial.gotchas ?? prev.gotchas,
+      decisionLog: Array.isArray(partial.decisionLog) ? partial.decisionLog : prev.decisionLog,
+      updatedAt: new Date().toISOString(),
+    };
+    this.persistBrief(brief);
+    return brief;
+  }
+
+  /** Append a decision/convention to the brief's historic log. */
+  addDecision(scope: string, input: { title: string; decision: string; rationale?: string }): ProjectBrief {
+    const prev = this.getBrief(scope) ?? this.emptyBrief(scope);
+    prev.decisionLog = prev.decisionLog ?? [];
+    prev.decisionLog.push({
+      id: newId('dec'),
+      title: input.title,
+      decision: input.decision,
+      rationale: input.rationale ?? '',
+      at: new Date().toISOString(),
+    });
+    prev.updatedAt = nowIso();
+    this.persistBrief(prev);
+    return prev;
+  }
+
+  /** Build a starter brief from the project's current top memory + docs (used for first-time seeding). */
+  seedBrief(scope: string): ProjectBrief {
+    const prev = this.getBrief(scope) ?? this.emptyBrief(scope);
+    const topMem = this.deps.memory.list({ category: scope, limit: 12 });
+    const topDocs = this.deps.docs.list({ scope, limit: 8 });
+    const brief: ProjectBrief = {
+      ...prev,
+      scope,
+      overview: prev.overview || (topDocs[0]?.title ?? ''),
+      codeStyle: prev.codeStyle,
+      repoLayout: prev.repoLayout,
+      buildTest: prev.buildTest,
+      assetConventions: prev.assetConventions,
+      gotchas: prev.gotchas,
+      updatedAt: nowIso(),
+    };
+    // Seed a "known facts / conventions" baseline from memory when empty.
+    if (!prev.codeStyle && topMem.length) {
+      brief.codeStyle = topMem.slice(0, 6).map((m) => `- ${m.content}`).join('\n');
+    }
+    this.persistBrief(brief);
+    return brief;
+  }
+
+  private persistBrief(brief: ProjectBrief): void {
+    this.deps.store.db
+      .prepare('INSERT INTO context_briefs (scope, brief_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(scope) DO UPDATE SET brief_json=excluded.brief_json, updated_at=excluded.updated_at')
+      .run(brief.scope, JSON.stringify(brief), brief.updatedAt);
   }
 
   private render(ctx: {

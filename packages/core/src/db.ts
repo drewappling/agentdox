@@ -87,6 +87,12 @@ CREATE TABLE IF NOT EXISTS context_snapshots (
   session_msgs  INTEGER NOT NULL DEFAULT 0,
   assembled_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS context_briefs (
+  scope       TEXT PRIMARY KEY,
+  brief_json  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
 `;
 
 export interface Store {

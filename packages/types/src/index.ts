@@ -124,6 +124,28 @@ export interface ContextSnapshot {
   assembledAt: string;
 }
 
+/** One entry in the project's historic decision/convention log. */
+export interface DecisionEntry {
+  id: string;
+  title: string;
+  decision: string;
+  rationale: string;
+  at: string;
+}
+
+/** The durable, cumulative on-ramp ("historic context") for a project/scope. */
+export interface ProjectBrief {
+  scope: string;
+  overview: string;
+  repoLayout: string;
+  codeStyle: string;
+  buildTest: string;
+  assetConventions: string;
+  gotchas: string;
+  decisionLog: DecisionEntry[];
+  updatedAt: string;
+}
+
 // ---- Projects ----
 
 /**

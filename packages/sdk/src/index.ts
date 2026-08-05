@@ -2,6 +2,7 @@ import type {
   ContextRequest,
   ContextSlice,
   ContextSnapshot,
+  ProjectBrief,
   Doc,
   DocVersion,
   MemoryEntry,
@@ -125,6 +126,13 @@ export class AgentDoxClient {
     assemble: (req: ContextRequest) => this.request<ContextSlice>('POST', '/context/assemble', req),
     snapshot: (scope: string) => this.request<ContextSnapshot>('GET', `/context/snapshot?scope=${encodeURIComponent(scope)}`),
     refresh: (scope: string) => this.request<ContextSnapshot>('POST', '/context/refresh', { scope }),
+    brief: {
+      get: (scope: string) => this.request<ProjectBrief>('GET', `/context/brief?scope=${encodeURIComponent(scope)}`),
+      save: (scope: string, brief: Partial<ProjectBrief>) => this.request<ProjectBrief>('PUT', '/context/brief', { scope, ...brief }),
+      addDecision: (scope: string, input: { title: string; decision: string; rationale?: string }) =>
+        this.request<ProjectBrief>('POST', '/context/brief/decision', { scope, ...input }),
+      seed: (scope: string) => this.request<ProjectBrief>('POST', '/context/brief/seed', { scope }),
+    },
   };
 
   // ---- Projects (agent-provisioned workspaces) ----
