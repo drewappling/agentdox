@@ -4,10 +4,20 @@ import { roleAtLeast, type Principal, type Role } from '@agentdox/types';
 import { z } from 'zod';
 
 const block = (text: string) => ({ type: 'text' as const, text });
-const ok = (text: string, structuredContent?: unknown) =>
-  structuredContent === undefined
-    ? { content: [block(text)] }
-    : { content: [block(text)], structuredContent: structuredContent as Record<string, unknown> };
+/**
+ * MCP requires `structuredContent` to be a JSON *object*. The list/search tools
+ * naturally produce arrays, and handing one over fails client-side schema
+ * validation at runtime ("array vs record") — which the old
+ * `as Record<string, unknown>` cast hid at compile time. Wrap arrays in
+ * `{ items }` so every tool stays valid regardless of what it returns.
+ */
+const ok = (text: string, structuredContent?: unknown) => {
+  if (structuredContent === undefined) return { content: [block(text)] };
+  const structured = Array.isArray(structuredContent)
+    ? { items: structuredContent }
+    : (structuredContent as Record<string, unknown>);
+  return { content: [block(text)], structuredContent: structured };
+};
 const deny = (msg: string) => ({ isError: true as const, content: [block(msg)] });
 
 /**
