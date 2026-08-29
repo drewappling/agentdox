@@ -144,33 +144,50 @@ export class IndexService {
     type Pending = { kind: 'memory' | 'chunk'; id: string; scope: string | null; text: string };
     const pending: Pending[] = [];
 
+    // Rows with no vector for the active model, OR whose text changed since it was embedded.
+    // The hash comparison is the point: `memory_update` is a mandated part of the write protocol,
+    // and without it an edited entry keeps a vector describing text that no longer exists. Doc
+    // chunks get fresh ids on every doc write so they cannot go stale, but the same check costs
+    // nothing and covers a chunk written by any other path.
+    const stale = (currentText: string, storedHash: string | null): boolean =>
+      storedHash === null || storedHash !== hash(currentText);
+
     const scopeSql = opts.scope ? 'AND m.category = ?' : '';
     const memArgs = opts.scope ? [provider.model, opts.scope] : [provider.model];
     const memRows = this.store.db
       .prepare(
-        `SELECT m.id, m.category AS scope, m.content FROM memory m
+        `SELECT m.id, m.category AS scope, m.content, e.content_hash FROM memory m
          LEFT JOIN embeddings e ON e.owner_kind = 'memory' AND e.owner_id = m.id AND e.model = ?
-         WHERE e.owner_id IS NULL ${scopeSql}`,
+         WHERE 1 = 1 ${scopeSql}`,
       )
-      .all(...memArgs) as { id: string; scope: string | null; content: string }[];
-    for (const r of memRows) pending.push({ kind: 'memory', id: r.id, scope: r.scope, text: r.content });
+      .all(...memArgs) as { id: string; scope: string | null; content: string; content_hash: string | null }[];
+    for (const r of memRows) {
+      if (stale(r.content, r.content_hash)) {
+        pending.push({ kind: 'memory', id: r.id, scope: r.scope, text: r.content });
+      }
+    }
 
     const chunkScopeSql = opts.scope ? 'AND c.scope = ?' : '';
     const chunkArgs = opts.scope ? [provider.model, opts.scope] : [provider.model];
     const chunkRows = this.store.db
       .prepare(
-        `SELECT c.id, c.scope, c.title, c.heading, c.content FROM doc_chunks c
+        `SELECT c.id, c.scope, c.title, c.heading, c.content, e.content_hash FROM doc_chunks c
          LEFT JOIN embeddings e ON e.owner_kind = 'chunk' AND e.owner_id = c.id AND e.model = ?
-         WHERE e.owner_id IS NULL ${chunkScopeSql}`,
+         WHERE 1 = 1 ${chunkScopeSql}`,
       )
-      .all(...chunkArgs) as { id: string; scope: string | null; title: string; heading: string; content: string }[];
+      .all(...chunkArgs) as {
+        id: string;
+        scope: string | null;
+        title: string;
+        heading: string;
+        content: string;
+        content_hash: string | null;
+      }[];
     for (const r of chunkRows) {
-      pending.push({
-        kind: 'chunk',
-        id: r.id,
-        scope: r.scope,
-        text: [r.title, r.heading, r.content].filter(Boolean).join('\n'),
-      });
+      const text = [r.title, r.heading, r.content].filter(Boolean).join('\n');
+      if (stale(text, r.content_hash)) {
+        pending.push({ kind: 'chunk', id: r.id, scope: r.scope, text });
+      }
     }
 
     const budget = opts.limit ?? pending.length;
