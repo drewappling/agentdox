@@ -91,6 +91,21 @@ export interface ContextRequest {
   sessionLimit?: number;
   /** Only include memory above this importance when low on budget. */
   minImportance?: number;
+  /**
+   * Budget for the project brief, in characters. The brief is the most curated
+   * content in the store — overview, conventions, gotchas, decision log — and it
+   * is query-INDEPENDENT, so it belongs at the FRONT of the block where a
+   * consumer's prompt cache can hold it across turns.
+   *
+   * It also grows without bound: one entry is appended per recorded decision, so
+   * it needs a budget rather than a "include it all" switch. Static sections are
+   * always kept (measured: ~1.6k chars); the decision log takes what remains,
+   * newest first, since the newest decision is the one still in force.
+   *
+   * 0 (the default) omits the brief entirely — no behaviour change for callers
+   * that have not asked for it.
+   */
+  briefChars?: number;
 }
 
 /** A ranked memory hit. */
@@ -110,6 +125,8 @@ export interface ContextSlice {
   prompt: string;
   /** Rough character budget consumed by the assembly. */
   chars: number;
+  /** Characters the project brief contributed to `prompt`. 0 when not requested. */
+  briefChars: number;
 }
 
 /** A persisted, auto-refreshed context baseline for one scope/project (auto-context job). */

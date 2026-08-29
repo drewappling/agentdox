@@ -11,6 +11,23 @@ const DEFAULT_SESSION_LIMIT = 20;
 const DEFAULT_MIN_IMPORTANCE = 0.7;
 /** Long docs are trimmed so they don't blow the context budget. */
 const MAX_DOC_CHARS = 2000;
+/**
+ * The brief is query-independent and the most curated content in the store, so
+ * it is worth prompt-cache space — but it grows by one entry per recorded
+ * decision and must never crowd out the query-relevant material. Measured on two
+ * live scopes (2026-08-29): the static sections total ~1.6k chars while the
+ * decision log is 19,124 of 20,734 (92%). So the static sections are always
+ * kept and the log takes whatever budget remains, newest first.
+ */
+const BRIEF_STATIC_KEYS = ['overview', 'repoLayout', 'codeStyle', 'buildTest', 'assetConventions', 'gotchas'] as const;
+const BRIEF_SECTION_LABEL: Record<(typeof BRIEF_STATIC_KEYS)[number], string> = {
+  overview: 'Overview',
+  repoLayout: 'Repo layout & tooling',
+  codeStyle: 'Code style',
+  buildTest: 'Build & test',
+  assetConventions: 'Asset conventions',
+  gotchas: 'Gotchas',
+};
 
 /** A persisted, auto-refreshed context baseline for one scope/project. */
 export interface ContextSnapshot {
@@ -109,7 +126,11 @@ export class ContextService {
     // --- Sessions: most recent messages in scope. ---
     const sessionMessages = this.deps.sessions.recentMessages(scope, sessionLimit);
 
-    const prompt = this.render({ request, memory, docs, sessionMessages });
+    // --- Brief: query-independent, so it renders FIRST and caches well. ---
+    const briefBudget = request.briefChars ?? 0;
+    const briefBlock = briefBudget > 0 ? this.renderBrief(scope, briefBudget) : '';
+
+    const prompt = this.render({ request, memory, docs, sessionMessages, briefBlock });
     return {
       request,
       assembledAt: new Date().toISOString(),
@@ -118,6 +139,7 @@ export class ContextService {
       sessionMessages,
       prompt,
       chars: prompt.length,
+      briefChars: briefBlock.length,
     };
   }
 
@@ -275,17 +297,67 @@ export class ContextService {
       .run(brief.scope, JSON.stringify(brief), brief.updatedAt);
   }
 
+  /**
+   * Render the project brief within `budgetChars`. Layout is byte-exact against
+   * the budget: static sections first (measured ~1.6k chars, they carry the
+   * durable conventions), then as many decision-log entries as fit, NEWEST
+   * first — the newest decision is the one still in force, and older ones
+   * survive in `GET /context/brief` for anyone who needs the history.
+   *
+   * An entry that does not fit whole is dropped, never truncated mid-sentence:
+   * a half-decision is worse than an absent one, and the next entry down may
+   * fit. Empty scopes render nothing rather than a hollow scaffold.
+   */
+  private renderBrief(scope: string, budgetChars: number): string {
+    const brief = this.getBrief(scope);
+    if (brief === null) return '';
+
+    const section = (label: string, body: string): string => (body.trim() ? `## ${label}\n${body.trim()}\n` : '');
+    const parts: string[] = [`# Project brief: ${scope} (updated ${brief.updatedAt})\n`];
+
+    for (const key of BRIEF_STATIC_KEYS) {
+      const block = section(BRIEF_SECTION_LABEL[key], brief[key] ?? '');
+      if (!block) continue;
+      if (parts.join('').length + block.length > budgetChars) break;
+      parts.push(block);
+    }
+
+    const used = parts.join('').length;
+    let logBudget = budgetChars - used;
+    const logLines: string[] = [];
+    for (const d of [...brief.decisionLog].sort((a, b) => (a.at < b.at ? 1 : -1))) {
+      if (logBudget <= 0) break;
+      const line = `- ${d.title}: ${d.decision}`;
+      if (line.length > logBudget) break;
+      logLines.push(line);
+      logBudget -= line.length + 1;
+    }
+    if (logLines.length > 0) {
+      parts.push(`## Decisions (newest first)\n${logLines.join('\n')}\n`);
+    }
+
+    const out = parts.join('\n').trimEnd();
+    return out.length <= budgetChars ? out : out.slice(0, budgetChars);
+  }
+
   private render(ctx: {
     request: ContextRequest;
     memory: MemoryHit[];
     docs: { id: string; slug: string; title: string; content: string; version: number }[];
     sessionMessages: { role: string; content: string }[];
+    /** Pre-rendered budgeted brief, or '' when not requested. Rendered first. */
+    briefBlock: string;
   }): string {
     const scope = ctx.request.scope;
     const lines: string[] = [];
     lines.push(`# Context: ${scope}`);
     if (ctx.request.query) lines.push(`Task/relevance query: ${ctx.request.query}`);
     lines.push('');
+
+    if (ctx.briefBlock) {
+      lines.push(ctx.briefBlock);
+      lines.push('');
+    }
 
     lines.push('## Memory');
     if (ctx.memory.length === 0) lines.push('(no stored memory in this scope)');
