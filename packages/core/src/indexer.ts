@@ -98,6 +98,18 @@ export class IndexService {
     this.store.db.prepare('DELETE FROM doc_chunks WHERE doc_id = ?').run(docId);
   }
 
+  /**
+   * True when there is content the lexical index does not cover — an upgraded store whose
+   * index tables were created empty, a restored backup, or rows inserted straight into SQLite.
+   * Cheap enough (four COUNTs) to call on every open.
+   */
+  needsLexicalBuild(): boolean {
+    const n = (sql: string): number => (this.store.db.prepare(sql).get() as { n: number }).n;
+    if (n('SELECT COUNT(*) n FROM memory') > 0 && n('SELECT COUNT(*) n FROM memory_fts') === 0) return true;
+    if (n('SELECT COUNT(*) n FROM docs') > 0 && n('SELECT COUNT(*) n FROM doc_chunks') === 0) return true;
+    return false;
+  }
+
   /** Rebuild every lexical index from the source tables. Safe to run at any time. */
   rebuildLexical(): { memory: number; chunks: number } {
     this.store.db.exec('DELETE FROM memory_fts');

@@ -228,6 +228,35 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
   );
 
   server.registerTool(
+    'docs_passages',
+    {
+      title: 'Search doc passages',
+      description:
+        'Search documentation and get back the matching PASSAGES rather than whole documents. Prefer this over docs_search when you want the part of a doc that answers a question: a long doc returned whole is truncated, and the truncation is rarely the relevant part. Each hit carries the doc slug and heading breadcrumb, so you can docs_read the full document when a passage is not enough.',
+      inputSchema: {
+        query: z.string(),
+        scope: z.string().optional().describe('Project scope (e.g. ashlands)'),
+        limit: z.number().int().min(1).max(50).optional(),
+      },
+    },
+    async ({ query, scope, limit }) => {
+      if (scope && !can(principal, scope, 'read')) return deny(GROUP_MSG(scope, 'read'));
+      const hits = await dox.docs.searchChunks(query, { scope, limit: limit ?? 8 });
+      // Chunks carry their doc's scope, so an unscoped query still filters per-hit.
+      const readable = hits.filter((h) => {
+        const doc = dox.docs.get(h.docId);
+        return can(principal, doc?.scope ?? '', 'read');
+      });
+      const text = readable.length
+        ? readable
+            .map((h) => `### ${h.title} — ${h.slug}${h.heading ? ` § ${h.heading}` : ''}\n${h.content}`)
+            .join('\n\n')
+        : '(no passages match)';
+      return ok(text, readable);
+    },
+  );
+
+  server.registerTool(
     'docs_update',
     {
       title: 'Update doc',
@@ -240,6 +269,49 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       if (!can(principal, existing.scope ?? '', 'write')) return deny(GROUP_MSG(existing.scope ?? '', 'write'));
       const doc = dox.docs.update(id, { title, content, tags });
       return ok(`Updated ${id} → v${doc?.version}`, doc);
+    },
+  );
+
+  // ---------- Retrieval index ----------
+  server.registerTool(
+    'index_stats',
+    {
+      title: 'Retrieval index stats',
+      description:
+        'How much of a scope is indexed for search: memory entries and doc passages, and how many carry embeddings. Use it when search results look stale or thin — "embedded" far below "total" means the vector half of retrieval is not covering this scope yet.',
+      inputSchema: { scope: z.string().optional() },
+    },
+    async ({ scope }) => {
+      if (scope && !can(principal, scope, 'read')) return deny(GROUP_MSG(scope, 'read'));
+      const stats = dox.index.stats(scope);
+      const line = (label: string, x: { total: number; embedded: number }) =>
+        `${label}: ${x.total} indexed, ${x.embedded} embedded`;
+      const provider = stats.provider ? `${stats.provider} (${stats.model})` : 'none — lexical-only';
+      return ok(`${line('memory', stats.memory)}
+${line('passages', stats.chunks)}
+embeddings: ${provider}`, stats);
+    },
+  );
+
+  server.registerTool(
+    'index_rebuild',
+    {
+      title: 'Rebuild retrieval index',
+      description:
+        'Re-chunk and re-index a scope, then embed anything missing. Needed only after rows are written straight into the database, or to force a refresh; ordinary writes index themselves.',
+      inputSchema: { scope: z.string().optional(), embed: z.boolean().optional() },
+    },
+    async ({ scope, embed }) => {
+      // Rebuilding is global (it re-chunks every doc), so an unscoped call needs wildcard admin.
+      const required = scope ?? '*';
+      if (!can(principal, required, 'admin')) return deny(GROUP_MSG(required, 'admin'));
+      const lexical = dox.index.rebuildLexical();
+      const embedded = embed === false ? null : await dox.index.backfillEmbeddings({ scope });
+      return ok(
+        `Rebuilt ${lexical.memory} memory + ${lexical.chunks} passages` +
+          (embedded ? `; embedded ${embedded.embedded}${embedded.error ? ` (stopped: ${embedded.error})` : ''}` : ''),
+        { lexical, embedded },
+      );
     },
   );
 

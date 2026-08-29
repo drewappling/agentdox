@@ -17,7 +17,8 @@
     "dev:web": "npm run dev -w @agentdox/web",
     "mcp": "npm run start -w @agentdox/mcp",
     "test:auth": "node --disable-warning=ExperimentalWarning scripts/test-auth.mjs",
-    "test:server-auth": "node --disable-warning=ExperimentalWarning scripts/test-server-auth.mjs"
+    "test:server-auth": "node --disable-warning=ExperimentalWarning scripts/test-server-auth.mjs",
+    "test:retrieval": "node --disable-warning=ExperimentalWarning scripts/test-retrieval.mjs"
   },
   "engines": {
     "node": ">=20"
