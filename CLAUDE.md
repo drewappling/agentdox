@@ -11,6 +11,18 @@ repo; the scope comes from *this folder* (`AGENTDOX_SCOPE` in `.env.agentdox`, g
 from the token. That token grants every scope, so a wrong slug is **not** rejected — it silently
 writes into another project.
 
+**Searching agentdox.** Retrieval is hybrid — BM25 keyword matching fused with embeddings — and
+runs over *passages* of docs, not whole files. So ask in your own words; exact identifiers work
+too. Two habits worth having:
+
+- **Prefer `docs_passages` over `docs_search`.** It returns the section that answers the
+  question. `docs_search` returns whole documents, which then get truncated, and the truncation
+  is rarely the relevant part.
+- **If results look thin, run `index_stats {scope}` before concluding the store is empty.** It
+  reports how much of the scope is indexed and whether the embedding provider is reachable;
+  `embedded` far below `total`, or an unreachable provider, means you are getting keyword-only
+  results.
+
 Keeping agentdox current is part of completing a task, not optional. Full protocol:
 `.claude/skills/agentdox/SKILL.md`.
 
@@ -21,6 +33,18 @@ Keeping agentdox current is part of completing a task, not optional. Full protoc
 | Persisted env value | Windows **User** environment (`[Environment]::GetEnvironmentVariable('AGENTDOX_TOKEN','User')`) |
 | Server | `http://localhost:3003` — Docker container `agentdox-server` |
 | Admin token (to re-mint the global PAT) | `deploy/.env` |
+
+## Retrieval
+
+Search is hybrid: BM25 over SQLite FTS5 fused by reciprocal rank with cosine over embeddings,
+with docs chunked on markdown headings so retrieval works on passages. Embeddings are optional
+(`AGENTDOX_EMBED_PROVIDER`, default `none` upstream, `ollama` here) and their absence degrades
+to lexical rather than failing. The index self-heals on open, writes index themselves, and
+vectors are backfilled by the context scheduler — never on the write path.
+
+`npm run test:retrieval` is the ranking regression fixture; vector checks skip when no provider
+is running. Design, measurements, and the two things the plan got wrong:
+`docs/architecture/rag.md`.
 
 ## Build & test
 
