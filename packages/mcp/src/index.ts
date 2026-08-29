@@ -50,7 +50,10 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       description: 'Create or get an agent workspace (project). The slug becomes the scope namespace for memory/docs/sessions. Call this on connect so subsequent memory/docs are scoped to your project.',
       inputSchema: {
         slug: z.string().describe('Stable identifier, also the scope (e.g. ashlands)'),
-        name: z.string().describe('Human-friendly project name'),
+        name: z
+          .string()
+          .optional()
+          .describe('Human-friendly project name. Only used if the project does not exist yet; defaults to the slug.'),
         description: z.string().optional(),
       },
     },

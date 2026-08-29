@@ -166,7 +166,7 @@ export class AgentDoxClient {
     list: () => this.request<Project[]>('GET', '/projects'),
     get: (slug: string) => this.request<Project>('GET', `/projects/${encodeURIComponent(slug)}`),
     /** Create/ensure a project workspace by slug. Hands back a scoped PAT on first claim. */
-    ensure: (input: { slug: string; name: string; description?: string }) =>
+    ensure: (input: { slug: string; name?: string; description?: string }) =>
       this.request<ProjectProvision>('POST', '/projects', input),
     /** Delete a project and all of its scoped data (admin or owner). */
     remove: (slug: string) => this.request<{ ok: boolean; removed: string }>('DELETE', `/projects/${encodeURIComponent(slug)}`),

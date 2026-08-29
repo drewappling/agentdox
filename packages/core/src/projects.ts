@@ -13,7 +13,8 @@ interface Row {
 
 export interface NewProject {
   slug: string;
-  name: string;
+  /** Display name. Only used when the project is created; defaults to the slug. */
+  name?: string;
   description?: string;
   ownerSub?: string;
 }
@@ -46,14 +47,21 @@ export class ProjectService {
     return row ? toProject(row) : null;
   }
 
-  /** Create if absent, otherwise return the existing project (idempotent for agents). */
+  /**
+   * Create if absent, otherwise return the existing project (idempotent for agents).
+   *
+   * `name` is optional and only consulted on creation: agents are told to call this on every
+   * connect, and by then the project almost always exists, so demanding a display name each
+   * time is friction with nothing behind it. An existing project's name is never overwritten
+   * here — renaming is a deliberate act, not a side effect of saying hello.
+   */
   ensure(input: NewProject): Project {
     const existing = this.get(input.slug);
     if (existing) return existing;
     const id = newId('proj');
     this.store.db
       .prepare('INSERT INTO projects (id, slug, name, description, owner_sub, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, input.slug, input.name, input.description ?? null, input.ownerSub ?? null, nowIso());
+      .run(id, input.slug, input.name ?? input.slug, input.description ?? null, input.ownerSub ?? null, nowIso());
     return this.get(input.slug) as Project;
   }
 

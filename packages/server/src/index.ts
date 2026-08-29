@@ -142,9 +142,11 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     return pr;
   });
 
-  app.post<{ Body: { slug: string; name: string; description?: string } }>('/projects', async (req, reply) => {
+  app.post<{ Body: { slug: string; name?: string; description?: string } }>('/projects', async (req, reply) => {
     const b = req.body ?? ({} as { slug?: string; name?: string; description?: string });
-    if (!b.slug || !b.name) return reply.code(400).send({ error: 'slug_name_required' });
+    // `name` is optional: this route is the idempotent "ensure", called on every agent connect,
+    // and it is only consulted when the project is actually created.
+    if (!b.slug) return reply.code(400).send({ error: 'slug_required' });
     const existing = dox.projects.get(b.slug);
     if (existing) {
       if (!guard(req, reply, auth, principalOf(req), existing.slug, 'read')) return;
