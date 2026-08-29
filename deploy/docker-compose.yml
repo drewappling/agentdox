@@ -72,10 +72,12 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_ADMIN:-admin}"
       KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in deploy/.env}"
       KC_HEALTH_ENABLED: "true"
-      # Force a single issuer (http://localhost:8080/realms/agentdox) so browser and
-      # in-container tokens validate identically against agentdox.
-      KC_HOSTNAME: "localhost"
-      KC_HOSTNAME_PORT: "${KEYCLOAK_PORT:-8090}"
+      # Force a single issuer so browser and in-container tokens validate identically against
+      # agentdox. This must be a FULL URL: Keycloak 26 dropped hostname-port, and a bare
+      # hostname makes it take the port from the request — so a token fetched in-network via
+      # keycloak:8080 was stamped iss=http://localhost:8080 and failed validation against the
+      # configured issuer on :8090.
+      KC_HOSTNAME: "http://localhost:${KEYCLOAK_PORT:-8090}"
     ports:
       - "${KEYCLOAK_PORT:-8090}:8080"
     volumes:

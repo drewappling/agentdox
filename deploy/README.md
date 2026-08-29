@@ -46,13 +46,14 @@ curl -s http://localhost:3003/health
 ### Test A — real user OIDC token through agentdox (password grant)
 
 This validates a **real Keycloak user JWT** against the API's JWKS validation + scope RBAC.
-Must run **inside the compose network** so the token `iss` matches the agentdox issuer
-(`http://keycloak:8080/realms/agentdox`, not `localhost`):
+Keycloak pins a single issuer via `KC_HOSTNAME` (a full URL), so a token validates the same
+whether it was fetched from the host on `:8090` or in-network via `keycloak:8080`. Run it
+inside the container so the script can reach agentdox on `127.0.0.1:3003`:
 
 ```bash
 docker cp deploy/oidc-smoke.mjs agentdox-server:/tmp/oidc-smoke.mjs
 docker exec agentdox-server node /tmp/oidc-smoke.mjs
-# user token iss = http://keycloak:8080/realms/agentdox, agentdox:scopes = "demo:write ashlands:read"
+# user token iss = http://localhost:8090/realms/agentdox, agentdox:scopes = "demo:write ashlands:read"
 # GET /memory?category=demo   -> 200 (write grant)
 # POST /memory category=ashlands -> 403 (read-only)
 # POST /context/assemble scope=demo -> 200
