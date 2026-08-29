@@ -16,7 +16,8 @@ agents — only the glue file differs.
   - **MCP** (stdio) — embeds agentdox directly against the SQLite file. Easiest for Claude/Cursor.
   - **REST + SDK** — `@agentdox/sdk` (`client.projects/memory/docs/sessions/context`).
   - **REST + HTTP** — curl / any language, with `Authorization: Bearer <pat>`.
-- **Credentials**: OIDC access token, a PAT, or the project-scoped PAT from provisioning.
+- **Credentials**: OIDC access token, a PAT (scoped per project, or one wildcard token shared
+  across every project — see below), or the project-scoped PAT returned by provisioning.
 
 ## Provision the project
 
@@ -57,6 +58,41 @@ Put this in the agent repo's `.mcp.json`:
 Set `AGENTDOX_PROJECT_TOKEN` in the agent's environment to a token that grants **write/admin on
 your project scope** (get one from the web UI's Projects view, or `POST /projects` provisioning,
 or mint a PAT via the admin API). `${VAR}` is substituted from the env by Claude Code and Cursor.
+
+### One token across every project (single-operator setups)
+
+Per-project tokens mean a fresh mint *and* a fresh environment variable for every repo you add.
+If one person owns every project, mint **one wildcard PAT** instead and let the *project folder*
+supply the scope:
+
+```bash
+curl -X POST http://localhost:3003/auth/tokens   -H "Authorization: Bearer $AGENTDOX_ADMIN_TOKEN"   -H 'content-type: application/json'   -d '{"name":"global-agent","grants":{"*":"admin"}}'
+```
+
+`.mcp.json` then becomes **identical in every repo** (`Bearer ${AGENTDOX_TOKEN}`, with
+`AGENTDOX_TOKEN` set once in the user environment), and the only per-repo file is
+`.env.agentdox`:
+
+```ini
+AGENTDOX_URL=http://localhost:3003
+AGENTDOX_SCOPE=ashlands          # the one value derived from this project folder
+AGENTDOX_TOKEN=<the global pat>
+```
+
+Adding a project is then: make the folder, set `AGENTDOX_SCOPE`, call `project_ensure`. No new
+credential, no shell restart.
+
+Know what you trade away:
+
+- **`{"*":"admin"}` is instance admin, not just data access.** The `adminOnly` guard keys off
+  `grants['*'] === 'admin'`, so this token can also mint and revoke tokens and delete any
+  project. Fine for a single local operator; do not use it multi-tenant, and never hand it to a
+  third-party agent.
+- **Scope mistakes stop being caught.** A scoped token answers 403 when an agent writes another
+  project's slug; a wildcard token accepts it silently and files the data in the wrong
+  namespace. Scope discipline moves entirely into the agent's protocol.
+- **`write` is not sufficient.** `PATCH`/`DELETE` on memory, docs, and sessions require `admin`
+  *on the scope*, so a `{"*":"write"}` token cannot update the entries it just created.
 
 **stdio (local-only, separate store):** a local MCP server that embeds agentdox directly against a
 host SQLite file. It is *not* shared with a Docker-hosted web UI:

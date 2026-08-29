@@ -19,6 +19,8 @@ data/
 .env.*.local
 deploy/.env
 deploy/.env.local
+# per-repo agentdox config: holds the global PAT (instance admin) — never commit
+.env.agentdox
 
 # Logs
 *.log
