@@ -57,6 +57,8 @@ export interface DocVersion {
 
 /** A single message in a session. */
 export interface SessionMessage {
+  /** Row id, present on messages read back from the store. Used to de-duplicate retrieval. */
+  id?: number;
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   at: string;
@@ -144,6 +146,30 @@ export interface ContextSlice {
   chars: number;
   /** Characters the project brief contributed to `prompt`. 0 when not requested. */
   briefChars: number;
+}
+
+/** Retrieval-index coverage for a scope (or the whole store when unscoped). */
+export interface IndexStats {
+  memory: { total: number; embedded: number };
+  chunks: { total: number; embedded: number };
+  messages: { total: number; embedded: number };
+  /** Configured embedding provider id, or null when retrieval is lexical-only. */
+  provider: string | null;
+  model: string | null;
+  /**
+   * Whether the provider answered a reachability probe. null when none is configured.
+   * Retrieval degrades to lexical silently by design, so this is how a stopped model
+   * server becomes visible instead of just quietly absent from every ranking.
+   */
+  providerReachable: boolean | null;
+  providerCheckedAt: string | null;
+}
+
+/** Result of a full index rebuild. */
+export interface IndexRebuildResult {
+  lexical: { memory: number; chunks: number; messages: number };
+  embedded: { embedded: number; pending: number; error?: string } | null;
+  stats?: IndexStats;
 }
 
 /** A persisted, auto-refreshed context baseline for one scope/project (auto-context job). */

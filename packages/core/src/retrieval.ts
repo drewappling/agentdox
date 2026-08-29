@@ -73,7 +73,7 @@ export function buildMatchQuery(query: string): string | null {
  */
 export function lexicalSearch(
   db: DatabaseSync,
-  table: 'memory_fts' | 'chunk_fts',
+  table: 'memory_fts' | 'chunk_fts' | 'message_fts',
   query: string,
   opts: { scope?: string; limit?: number } = {},
 ): Ranked[] {
@@ -101,7 +101,7 @@ export function lexicalSearch(
  */
 export function vectorSearch(
   db: DatabaseSync,
-  kind: 'memory' | 'chunk',
+  kind: 'memory' | 'chunk' | 'message',
   queryVec: Float32Array,
   opts: { scope?: string; limit?: number; model?: string } = {},
 ): Ranked[] {

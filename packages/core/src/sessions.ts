@@ -1,6 +1,8 @@
 import type { Session, SessionMessage } from '@agentdox/types';
 import type { Store } from './db.js';
 import { newId, nowIso, parseJsonArray } from './util.js';
+import type { IndexService } from './indexer.js';
+import { fuseRRF, lexicalSearch, vectorSearch } from './retrieval.js';
 
 type SessionRow = {
   id: string;
@@ -11,14 +13,30 @@ type SessionRow = {
 };
 
 type MessageRow = {
+  id?: number;
   role: string;
   content: string;
   at: string;
   refs_json: string;
 };
 
+const toMessage = (r: MessageRow): SessionMessage => ({
+  ...(r.id === undefined ? {} : { id: r.id }),
+  role: r.role as SessionMessage['role'],
+  content: r.content,
+  at: r.at,
+  refs: parseJsonArray<string>(r.refs_json),
+});
+
 export class SessionService {
+  private indexer: IndexService | null = null;
+
   constructor(private readonly store: Store) {}
+
+  /** Wired by `AgentDox`; without it messages are stored but not searchable. */
+  setIndexer(indexer: IndexService): void {
+    this.indexer = indexer;
+  }
 
   create(input: { scope: string; title?: string; id?: string }): Session {
     const now = nowIso();
@@ -66,24 +84,21 @@ export class SessionService {
 
   messages(sessionId: string, limit = 1000): SessionMessage[] {
     const rows = this.store.db
-      .prepare('SELECT role, content, at, refs_json FROM messages WHERE session_id = ? ORDER BY id ASC LIMIT ?')
+      .prepare('SELECT id, role, content, at, refs_json FROM messages WHERE session_id = ? ORDER BY id ASC LIMIT ?')
       .all(sessionId, limit) as MessageRow[];
-    return rows.map((r) => ({
-      role: r.role as SessionMessage['role'],
-      content: r.content,
-      at: r.at,
-      refs: parseJsonArray<string>(r.refs_json),
-    }));
+    return rows.map(toMessage);
   }
 
   append(sessionId: string, message: Omit<SessionMessage, 'at'>): SessionMessage | null {
     const session = this.get(sessionId);
     if (!session) return null;
     const full: SessionMessage = { ...message, at: nowIso() };
-    this.store.db
+    const res = this.store.db
       .prepare('INSERT INTO messages (session_id, role, content, at, refs_json) VALUES (?, ?, ?, ?, ?)')
       .run(sessionId, full.role, full.content, full.at, JSON.stringify(full.refs ?? []));
-    return full;
+    const id = Number(res.lastInsertRowid);
+    this.indexer?.indexMessage({ id, scope: session.scope, role: full.role, content: full.content });
+    return { ...full, id };
   }
 
   end(sessionId: string): Session | null {
@@ -94,27 +109,69 @@ export class SessionService {
 
   /** Permanently delete a session and its messages (cascades via FK). */
   remove(sessionId: string): boolean {
+    this.indexer?.removeSessionMessages(sessionId); // before the cascade drops the rows
     const res = this.store.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
     return res.changes > 0;
   }
 
-  /** Latest messages across a scope, newest first (for context assembly). */
+  /** Latest messages across a scope, oldest-first within the window (for context assembly). */
   recentMessages(scope: string, limit = 20): SessionMessage[] {
     const rows = this.store.db
       .prepare(
-        `SELECT m.role, m.content, m.at, m.refs_json
+        `SELECT m.id, m.role, m.content, m.at, m.refs_json
          FROM messages m JOIN sessions s ON s.id = m.session_id
          WHERE s.scope = ?
          ORDER BY m.id DESC LIMIT ?`,
       )
       .all(scope, limit) as MessageRow[];
-    return rows
-      .reverse()
-      .map((r) => ({
-        role: r.role as SessionMessage['role'],
-        content: r.content,
-        at: r.at,
-        refs: parseJsonArray<string>(r.refs_json),
-      }));
+    return rows.reverse().map(toMessage);
+  }
+
+  /**
+   * Messages in a scope ranked by relevance to `query`, excluding ids the caller already has.
+   *
+   * Conversation used to reach context assembly by recency alone, so anything discussed more
+   * than `sessionLimit` messages ago was unreachable no matter how directly it answered the
+   * question. This is the other half: recency keeps continuity, relevance restores recall.
+   */
+  async relevantMessages(
+    scope: string,
+    query: string,
+    opts: { limit?: number; exclude?: Set<number> } = {},
+  ): Promise<SessionMessage[]> {
+    const limit = opts.limit ?? 6;
+    if (!query.trim() || limit <= 0) return [];
+    const pool = limit * 6;
+
+    const lists = [lexicalSearch(this.store.db, 'message_fts', query, { scope, limit: pool })];
+    const provider = this.indexer?.embeddingProvider;
+    if (provider) {
+      try {
+        const [queryVec] = await provider.embed([query], 'query');
+        if (queryVec) {
+          lists.push(vectorSearch(this.store.db, 'message', queryVec, { scope, limit: pool, model: provider.model }));
+        }
+      } catch {
+        // Provider unreachable: lexical-only, as everywhere else.
+      }
+    }
+
+    const fused = fuseRRF(lists.filter((l) => l.length));
+    if (!fused.length) return [];
+
+    const byId = this.store.db.prepare(
+      'SELECT id, role, content, at, refs_json FROM messages WHERE id = ?',
+    );
+    const out: SessionMessage[] = [];
+    for (const row of fused) {
+      const id = Number(row.id);
+      if (opts.exclude?.has(id)) continue;
+      const r = byId.get(id) as MessageRow | undefined;
+      if (!r) continue;
+      out.push(toMessage(r));
+      if (out.length >= limit) break;
+    }
+    // Chronological, so the block still reads as a conversation rather than a ranked list.
+    return out.sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
   }
 }

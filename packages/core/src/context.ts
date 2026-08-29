@@ -9,6 +9,12 @@ const DEFAULT_MEMORY_LIMIT = 15;
 const DEFAULT_DOCS_LIMIT = 3;
 const DEFAULT_SESSION_LIMIT = 20;
 const DEFAULT_MIN_IMPORTANCE = 0.7;
+/**
+ * Share of the session budget reserved for the most recent messages. The rest goes to
+ * relevance-ranked older ones. Two thirds keeps a resumable conversation tail intact while
+ * still leaving room to reach back for the turn that actually answers the query.
+ */
+const RECENCY_SHARE = 2 / 3;
 /** Whole-doc fallback trim, used only when there is no query to retrieve passages with. */
 const MAX_DOC_CHARS = 2000;
 /**
@@ -125,8 +131,24 @@ export class ContextService {
     }
     if (!passages.length) docs = this.deps.docs.list({ scope, limit: docsLimit });
 
-    // --- Sessions: most recent messages in scope. ---
-    const sessionMessages = this.deps.sessions.recentMessages(scope, sessionLimit);
+    // --- Sessions: recency for continuity, relevance for recall. ---
+    // Pure recency (the original behaviour) meant anything discussed more than `sessionLimit`
+    // messages ago could not reach the block however directly it answered the query. Pure
+    // relevance would break continuity — an agent resuming work needs the last few turns
+    // whether or not they match. So the budget is split: the newest RECENCY_SHARE of it is the
+    // tail of the conversation, and the remainder is filled with relevant older messages.
+    const recentCount = query ? Math.max(1, Math.ceil(sessionLimit * RECENCY_SHARE)) : sessionLimit;
+    const recent = this.deps.sessions.recentMessages(scope, recentCount);
+    let sessionMessages = recent;
+    if (query && sessionLimit > recentCount) {
+      const exclude = new Set(recent.map((m) => m.id).filter((id): id is number => id !== undefined));
+      const older = await this.deps.sessions.relevantMessages(scope, query, {
+        limit: sessionLimit - recentCount,
+        exclude,
+      });
+      // Older-but-relevant first, then the recent tail: the block reads chronologically.
+      sessionMessages = [...older, ...recent];
+    }
 
     // --- Brief: query-independent, so it renders FIRST and caches well. ---
     const briefBudget = request.briefChars ?? 0;

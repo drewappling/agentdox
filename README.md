@@ -62,6 +62,35 @@ npm run dev:server
 
 Run the auth test suites: `npm run test:auth` and `npm run test:server-auth`.
 
+## Retrieval
+
+Memory, docs, and conversation are searched with **hybrid retrieval**: BM25 over SQLite FTS5,
+fused by reciprocal rank with cosine similarity over embeddings. Documents are chunked on
+markdown headings, so retrieval and context assembly work on **passages** rather than whole
+files. Full design and measurements: [`docs/architecture/rag.md`](docs/architecture/rag.md).
+
+Embeddings are **optional and off by default** — with no provider configured, search is
+lexical-only, which is a documented degradation rather than a failure. To enable them:
+
+```bash
+AGENTDOX_EMBED_PROVIDER=ollama          # ollama | openai | none (default)
+AGENTDOX_EMBED_MODEL=nomic-embed-text   # 768 dims; task prefixes applied automatically
+AGENTDOX_EMBED_URL=http://localhost:11434
+# AGENTDOX_EMBED_API_KEY=...            # openai only
+```
+
+Both arms earn their place: over a ten-query benchmark, vectors scored MRR 1.000 on
+natural-language questions but 0.529 on exact identifiers (`SettlementLayout.Build`); BM25
+scored 0.800 and 0.600. Fused, 0.825 and 0.800.
+
+Indexing needs no attention in normal use — writes index themselves, the index rebuilds itself
+on open if it finds content it does not cover, and embeddings are backfilled by a background
+job so a stopped model server never blocks a write. `GET /index/stats` reports coverage per
+scope and whether the provider is reachable; `POST /index/rebuild` forces a full pass.
+
+`npm run test:retrieval` is a ranking regression fixture (vector checks skip when no provider
+is running).
+
 ## Status
 
 Early scaffold — see [IDEA.md](./IDEA.md) for the original motivation.

@@ -48,17 +48,18 @@ export class AgentDox {
     // Retrieval indexes. The embedding provider is optional: with none configured, search is
     // lexical-only, which is the documented degradation rather than a failure.
     this.index = new IndexService(this.store, createEmbeddingProvider(readEmbeddingConfig(env)));
+    this.sessions = new SessionService(this.store);
     this.memory.setIndexer(this.index);
     this.docs.setIndexer(this.index);
+    this.sessions.setIndexer(this.index);
     // Self-heal on open. A store written before the index tables existed — or restored from a
     // backup, or loaded straight into SQLite — would otherwise sit on an empty index and quietly
     // serve the legacy fallback until somebody knew to call /index/rebuild by hand. Lexical only:
     // it is pure SQLite and fast (~1.6s for 1,643 chunks). Vectors stay with the backfill job.
     if (env.AGENTDOX_INDEX_AUTOBUILD !== 'false' && this.index.needsLexicalBuild()) {
-      const built = this.index.rebuildLexical();
-      console.error(`[agentdox] built retrieval index: ${built.memory} memory, ${built.chunks} chunks`);
+      const b = this.index.rebuildLexical();
+      console.error(`[agentdox] built retrieval index: ${b.memory} memory, ${b.chunks} chunks, ${b.messages} messages`);
     }
-    this.sessions = new SessionService(this.store);
     this.context = new ContextService({ memory: this.memory, docs: this.docs, sessions: this.sessions, store: this.store });
     this.pat = new PatService(this.store);
     this.projects = new ProjectService(this.store);

@@ -4,7 +4,10 @@ import type {
   ContextSnapshot,
   ProjectBrief,
   Doc,
+  DocPassage,
   DocVersion,
+  IndexRebuildResult,
+  IndexStats,
   MemoryEntry,
   MemoryHit,
   Project,
@@ -99,6 +102,17 @@ export class AgentDoxClient {
       }),
     search: (q: string, filter: { scope?: string; limit?: number } = {}) =>
       this.request<Doc[]>('GET', '/docs/search', undefined, { q, scope: filter.scope, limit: filter.limit?.toString() }),
+    /**
+     * Passage-level search. Prefer this over `search` when you want the part of a document that
+     * answers a question: a long doc returned whole has to be truncated, and the truncation is
+     * rarely the relevant part.
+     */
+    passages: (q: string, filter: { scope?: string; limit?: number } = {}) =>
+      this.request<DocPassage[]>('GET', '/docs/passages', undefined, {
+        q,
+        scope: filter.scope,
+        limit: filter.limit?.toString(),
+      }),
     get: (id: string) => this.request<Doc>('GET', `/docs/${id}`),
     getBySlug: (slug: string) => this.request<Doc>('GET', `/docs/slug/${encodeURIComponent(slug)}`),
     create: (input: { slug: string; title: string; content: string; tags?: string[]; scope?: string }) =>
@@ -133,6 +147,18 @@ export class AgentDoxClient {
         this.request<ProjectBrief>('POST', '/context/brief/decision', { scope, ...input }),
       seed: (scope: string) => this.request<ProjectBrief>('POST', '/context/brief/seed', { scope }),
     },
+  };
+
+  // ---- Retrieval index ----
+  index = {
+    /** Coverage per scope, plus whether the embedding provider actually answered a probe. */
+    stats: (scope?: string) => this.request<IndexStats>('GET', '/index/stats', undefined, { scope }),
+    /**
+     * Re-chunk and re-index, then embed what is missing. Ordinary writes index themselves; this
+     * is for rows written straight into the database, or to force a refresh. Wildcard admin.
+     */
+    rebuild: (input: { scope?: string; embed?: boolean; limit?: number } = {}) =>
+      this.request<IndexRebuildResult>('POST', '/index/rebuild', input),
   };
 
   // ---- Projects (agent-provisioned workspaces) ----

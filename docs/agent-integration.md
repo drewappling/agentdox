@@ -37,6 +37,16 @@ const { project, token: projectPat } = await client.projects.ensure({ slug: 'ash
 #  project_ensure { "slug": "ashlands", "name": "Ashlands" }
 ```
 
+## Retrieval, in one paragraph
+
+Search is hybrid: BM25 over FTS5 fused with vector similarity, over **passages** of documents
+rather than whole files. Two things follow for an agent. `docs_passages` (MCP) /
+`GET /docs/passages` (REST) gives back the section that matched, which is almost always what you
+want over `docs_search`; and if results look thin, `index_stats` / `GET /index/stats` tells you
+whether the scope is actually indexed and whether the embedding provider is reachable, rather
+than leaving you to guess. Embeddings are optional — unset, retrieval is lexical-only and still
+works. See [`architecture/rag.md`](architecture/rag.md).
+
 ## MCP config (Claude Code / Cursor)
 
 **HTTP transport (recommended)** — the agent talks to the running agentdox REST API over HTTP,

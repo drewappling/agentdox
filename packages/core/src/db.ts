@@ -54,6 +54,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
 CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
   id UNINDEXED, scope UNINDEXED, body, tokenize = 'porter unicode61'
 );
+-- Conversation history was previously selected by recency alone, so a question whose answer
+-- was discussed twenty messages ago could not reach the context block at all.
+CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(
+  id UNINDEXED, scope UNINDEXED, body, tokenize = 'porter unicode61'
+);
 
 -- Vectors, when an embedding provider is configured. content_hash lets a backfill skip rows
 -- whose text has not changed; model lets a model swap invalidate rather than silently mixing

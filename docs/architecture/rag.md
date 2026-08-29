@@ -1,6 +1,7 @@
 # RAG support for agentdox
 
-**Status:** Implemented (v1.0). Stages 1–4 shipped; §4 records the plan, §8 what was built and
+**Status:** Implemented (v1.1). Stages 1–4 shipped, plus session retrieval, a self-healing
+index, MCP/SDK surfaces, and a regression fixture; §4 records the plan, §8 what was built and
 what the plan got wrong.
 **Scope:** Retrieval quality across memory, docs, and context assembly.
 **Measured:** 2026-08-29, against the live store (213 items across `ashlands`, `omp-router`, `agentdox`).
@@ -173,8 +174,25 @@ on every context refresh.
 | BM25 query building, vector scan, RRF | `core/src/retrieval.ts` |
 | Index maintenance, backfill, rebuild, stats | `core/src/indexer.ts` |
 | `doc_chunks`, `memory_fts`, `chunk_fts`, `embeddings` | `core/src/db.ts` |
-| `GET /index/stats`, `POST /index/rebuild` (wildcard admin) | `server/src/index.ts` |
+| `GET /index/stats`, `POST /index/rebuild` (wildcard admin), `GET /docs/passages` | `server/src/index.ts` |
 | Embedding top-up on each context-scheduler tick | `server/src/index.ts` |
+| MCP `docs_passages`, `index_stats`, `index_rebuild` | `mcp/src/index.ts` |
+| SDK `client.docs.passages`, `client.index.{stats,rebuild}` | `sdk/src/index.ts` |
+| Ranking regression fixture (`npm run test:retrieval`) | `scripts/test-retrieval.mjs` |
+
+**Sessions are retrieved, not just replayed.** Conversation reached the block by recency alone,
+so anything discussed further back than `sessionLimit` was unreachable however directly it
+answered the query. Messages are now indexed (`message_fts` + vectors) and the budget is split:
+two thirds is the recent tail, for continuity, and the remainder is relevance-ranked older
+messages, merged chronologically. Measured on `ashlands` with `sessionLimit: 9`, the block
+reaches message ids 75-137 where recency alone would have given 130-137.
+
+**The index heals itself.** `AgentDox` checks on open and rebuilds the lexical index when it
+finds content the index does not cover — an upgraded store, a restored backup, rows written
+straight into SQLite. Lexical only; vectors stay with the backfill job.
+`AGENTDOX_INDEX_AUTOBUILD=false` opts out. A rebuild also prunes vectors whose owner row is
+gone: chunk ids are regenerated on every doc write, so orphans accumulated silently and were
+scanned on every query (observed once as 1,902 vectors against 1,646 chunks).
 
 `MemoryService.search`, `DocService.search`, `ContextService.assemble` and `saveSnapshot` are now
 async, since the vector arm has to embed the query.

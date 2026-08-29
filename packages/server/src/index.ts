@@ -108,6 +108,9 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     const scope = (req.query as { scope?: string }).scope;
     if (scope && !guard(req, reply, auth, principalOf(req), scope, 'read')) return;
     if (!scope && !guard(req, reply, auth, principalOf(req), undefined, 'read')) return;
+    // Probe before reporting, so a stopped model server shows up here instead of silently
+    // dropping the vector arm out of every ranking.
+    await dox.index.checkProvider();
     return dox.index.stats(scope);
   });
 
@@ -264,6 +267,17 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     if (!q.q) return [];
     if (q.scope && !guard(req, reply, auth, principalOf(req), q.scope, 'read')) return;
     return dox.docs.search(q.q, { scope: q.scope, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+  });
+
+  /**
+   * Passage-level search. Returns the parts of documents that matched, rather than whole
+   * documents a caller then has to truncate blindly.
+   */
+  app.get('/docs/passages', async (req, reply) => {
+    const q = req.query as { q?: string; scope?: string; limit?: string };
+    if (!q.q) return [];
+    if (q.scope && !guard(req, reply, auth, principalOf(req), q.scope, 'read')) return;
+    return dox.docs.searchChunks(q.q, { scope: q.scope, limit: q.limit ? parseInt(q.limit, 10) : undefined });
   });
 
   app.get('/docs/slug/:slug', async (req, reply) => {
