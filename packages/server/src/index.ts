@@ -103,6 +103,27 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     return { ok: true };
   });
 
+  // ---- Retrieval index ----
+  app.get('/index/stats', async (req, reply) => {
+    const scope = (req.query as { scope?: string }).scope;
+    if (scope && !guard(req, reply, auth, principalOf(req), scope, 'read')) return;
+    if (!scope && !guard(req, reply, auth, principalOf(req), undefined, 'read')) return;
+    return dox.index.stats(scope);
+  });
+
+  /**
+   * Rebuild the lexical index and (optionally) embed what is missing. Needed after importing
+   * rows straight into SQLite, and after upgrading a store that predates the index tables.
+   */
+  app.post<{ Body: { scope?: string; embed?: boolean; limit?: number } }>('/index/rebuild', async (req, reply) => {
+    if (!adminOnly(req, reply)) return;
+    const lexical = dox.index.rebuildLexical();
+    const body = req.body ?? {};
+    const embedded =
+      body.embed === false ? null : await dox.index.backfillEmbeddings({ scope: body.scope, limit: body.limit });
+    return { lexical, embedded, stats: dox.index.stats(body.scope) };
+  });
+
   // ---- Projects (agent-provisioned workspaces; slug == scope namespace) ----
   app.get('/projects', async (req, reply) => {
     const projects = dox.projects.list();
@@ -463,6 +484,8 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
  * baseline. Controlled by AGENTDOX_CONTEXT_AUTOUPDATE / AGENTDOX_CONTEXT_INTERVAL_SECONDS
  * / AGENTDOX_CONTEXT_MAX_SCOPES (default 900s=15min, 50 scopes). Returns null when disabled.
  */
+const EMBED_BATCH_PER_TICK = 256;
+
 function startContextScheduler(dox: AgentDox): { intervalSeconds: number; stop: () => void } | null {
   const seconds = parseInt(process.env.AGENTDOX_CONTEXT_INTERVAL_SECONDS ?? '900', 10);
   const maxScopes = parseInt(process.env.AGENTDOX_CONTEXT_MAX_SCOPES ?? '50', 10);
@@ -474,13 +497,20 @@ function startContextScheduler(dox: AgentDox): { intervalSeconds: number; stop: 
       let refreshed = 0;
       for (const scope of scopes) {
         try {
-          dox.context.saveSnapshot(scope);
+          await dox.context.saveSnapshot(scope);
           refreshed++;
         } catch (e) {
           console.error(`[ctxjob] ${scope}: ${(e as Error).message}`);
         }
       }
       if (refreshed > 0) console.log(`[ctxjob] refreshed ${refreshed}/${scopes.length} scope(s)`);
+      // Vectors are deliberately off the write path, so this tick is where they catch up.
+      // A provider that is down reports an error and the next tick simply retries.
+      if (dox.index.embeddingProvider) {
+        const r = await dox.index.backfillEmbeddings({ limit: EMBED_BATCH_PER_TICK });
+        if (r.embedded) console.log(`[ctxjob] embedded ${r.embedded}, ${r.pending} pending`);
+        else if (r.error) console.error(`[ctxjob] embedding backfill: ${r.error}`);
+      }
     } catch (e) {
       console.error('[ctxjob] tick failed', (e as Error).message);
     }

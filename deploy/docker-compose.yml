@@ -35,6 +35,12 @@ services:
       AGENTDOX_OIDC_AUDIENCE: "${AGENTDOX_OIDC_AUDIENCE:-}"
       # Auto-context-update job (seconds between refreshes; 0 disables).
       AGENTDOX_CONTEXT_INTERVAL_SECONDS: "${AGENTDOX_CONTEXT_INTERVAL_SECONDS:-900}"
+      # Retrieval embeddings. "none" (the default) keeps search lexical-only and makes no network
+      # calls; "ollama" points at a model server on the DOCKER HOST, not inside this container.
+      AGENTDOX_EMBED_PROVIDER: "${AGENTDOX_EMBED_PROVIDER:-none}"
+      AGENTDOX_EMBED_MODEL: "${AGENTDOX_EMBED_MODEL:-nomic-embed-text}"
+      AGENTDOX_EMBED_URL: "${AGENTDOX_EMBED_URL:-http://host.docker.internal:11434}"
+      AGENTDOX_EMBED_API_KEY: "${AGENTDOX_EMBED_API_KEY:-}"
     # Access host-published Keycloak for JWKS.
     extra_hosts:
       - "host.docker.internal:host-gateway"

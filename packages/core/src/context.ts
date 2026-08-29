@@ -1,4 +1,4 @@
-import type { ContextRequest, ContextSlice, MemoryHit } from '@agentdox/types';
+import type { ContextRequest, ContextSlice, Doc, DocPassage, MemoryHit } from '@agentdox/types';
 import { DocService } from './docs.js';
 import { MemoryService } from './memory.js';
 import { SessionService } from './sessions.js';
@@ -9,7 +9,7 @@ const DEFAULT_MEMORY_LIMIT = 15;
 const DEFAULT_DOCS_LIMIT = 3;
 const DEFAULT_SESSION_LIMIT = 20;
 const DEFAULT_MIN_IMPORTANCE = 0.7;
-/** Long docs are trimmed so they don't blow the context budget. */
+/** Whole-doc fallback trim, used only when there is no query to retrieve passages with. */
 const MAX_DOC_CHARS = 2000;
 /**
  * The brief is query-independent and the most curated content in the store, so
@@ -73,7 +73,7 @@ export interface ContextAssemblerDeps {
 export class ContextService {
   constructor(private readonly deps: ContextAssemblerDeps) {}
 
-  assemble(request: ContextRequest): ContextSlice {
+  async assemble(request: ContextRequest): Promise<ContextSlice> {
     const memoryLimit = request.memoryLimit ?? DEFAULT_MEMORY_LIMIT;
     const docsLimit = request.docsLimit ?? DEFAULT_DOCS_LIMIT;
     const sessionLimit = request.sessionLimit ?? DEFAULT_SESSION_LIMIT;
@@ -84,7 +84,7 @@ export class ContextService {
     // --- Memory: relevance + importance, topped up with high-importance entries. ---
     let memory: MemoryHit[];
     if (query) {
-      const hits = this.deps.memory.search(query, {
+      const hits = await this.deps.memory.search(query, {
         category: scope,
         importanceBoost: 3,
         limit: memoryLimit,
@@ -108,20 +108,22 @@ export class ContextService {
     }
     memory = memory.slice(0, memoryLimit);
 
-    // --- Docs: query-relevant, else most-recent in scope. ---
-    let docs = query
-      ? this.deps.docs.search(query, { scope, limit: docsLimit })
-      : this.deps.docs.list({ scope, limit: docsLimit });
-    if (docs.length < docsLimit) {
-      const seen = new Set(docs.map((d) => d.id));
-      for (const doc of this.deps.docs.list({ scope, limit: docsLimit * 5 })) {
-        if (seen.has(doc.id)) continue;
-        docs.push(doc);
-        seen.add(doc.id);
-        if (docs.length >= docsLimit) break;
+    // --- Docs: passages when there is a query, whole docs when there is not. ---
+    // A query lets retrieval pick the passage that matched; with no query there is nothing to
+    // rank by, so the most-recent whole docs (trimmed) remain the best available baseline.
+    let passages: DocPassage[] = [];
+    let docs: Doc[] = [];
+    if (query) {
+      passages = await this.deps.docs.searchChunks(query, { scope, limit: docsLimit });
+      const seenDocs = new Set<string>();
+      for (const p of passages) {
+        if (seenDocs.has(p.docId)) continue;
+        seenDocs.add(p.docId);
+        const doc = this.deps.docs.get(p.docId);
+        if (doc) docs.push(doc);
       }
     }
-    docs = docs.slice(0, docsLimit);
+    if (!passages.length) docs = this.deps.docs.list({ scope, limit: docsLimit });
 
     // --- Sessions: most recent messages in scope. ---
     const sessionMessages = this.deps.sessions.recentMessages(scope, sessionLimit);
@@ -130,12 +132,13 @@ export class ContextService {
     const briefBudget = request.briefChars ?? 0;
     const briefBlock = briefBudget > 0 ? this.renderBrief(scope, briefBudget) : '';
 
-    const prompt = this.render({ request, memory, docs, sessionMessages, briefBlock });
+    const prompt = this.render({ request, memory, docs, passages, sessionMessages, briefBlock });
     return {
       request,
       assembledAt: new Date().toISOString(),
       memory,
       docs,
+      passages,
       sessionMessages,
       prompt,
       chars: prompt.length,
@@ -144,8 +147,8 @@ export class ContextService {
   }
 
   /** Assemble + persist a context baseline for a scope (auto-context-update job). */
-  saveSnapshot(scope: string, query = ''): ContextSnapshot {
-    const s = this.assemble({ scope, query });
+  async saveSnapshot(scope: string, query = ''): Promise<ContextSnapshot> {
+    const s = await this.assemble({ scope, query });
     const snap: ContextSnapshot = {
       scope,
       query,
@@ -344,6 +347,7 @@ export class ContextService {
     request: ContextRequest;
     memory: MemoryHit[];
     docs: { id: string; slug: string; title: string; content: string; version: number }[];
+    passages: DocPassage[];
     sessionMessages: { role: string; content: string }[];
     /** Pre-rendered budgeted brief, or '' when not requested. Rendered first. */
     briefBlock: string;
@@ -368,12 +372,22 @@ export class ContextService {
     lines.push('');
 
     lines.push('## Docs');
-    if (ctx.docs.length === 0) lines.push('(no docs in this scope)');
-    for (const doc of ctx.docs) {
-      lines.push(`### ${doc.title} (v${doc.version}) — ${doc.slug}`);
-      const body = doc.content.length > MAX_DOC_CHARS ? doc.content.slice(0, MAX_DOC_CHARS) + '\n…(truncated)' : doc.content;
-      lines.push(body);
-      lines.push('');
+    if (ctx.passages.length) {
+      // Passages carry slug + heading, so an agent that needs more can open the full doc.
+      for (const p of ctx.passages) {
+        lines.push(`### ${p.title} — ${p.heading ? `${p.slug} § ${p.heading}` : p.slug}`);
+        lines.push(p.content);
+        lines.push('');
+      }
+    } else if (ctx.docs.length === 0) {
+      lines.push('(no docs in this scope)');
+    } else {
+      for (const doc of ctx.docs) {
+        lines.push(`### ${doc.title} (v${doc.version}) — ${doc.slug}`);
+        const body = doc.content.length > MAX_DOC_CHARS ? doc.content.slice(0, MAX_DOC_CHARS) + '\n…(truncated)' : doc.content;
+        lines.push(body);
+        lines.push('');
+      }
     }
 
     lines.push('## Recent conversation');

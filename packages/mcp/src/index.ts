@@ -113,7 +113,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     },
     async ({ query, category, limit }) => {
       if (category && !can(principal, category, 'read')) return deny(GROUP_MSG(category, 'read'));
-      const hits = dox.memory.search(query, { category, limit: limit ?? 20 })
+      const hits = (await dox.memory.search(query, { category, limit: limit ?? 20 }))
         .filter((h) => can(principal, h.entry.category ?? '', 'read'));
       const text = hits.length
         ? hits.map((h, i) => `${i + 1}. [${h.score.toFixed(2)}] ${h.entry.content}`).join('\n')
@@ -222,7 +222,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     },
     async ({ query, scope, limit }) => {
       if (scope && !can(principal, scope, 'read')) return deny(GROUP_MSG(scope, 'read'));
-      const docs = dox.docs.search(query, { scope, limit: limit ?? 10 }).filter((d) => can(principal, d.scope ?? '', 'read'));
+      const docs = (await dox.docs.search(query, { scope, limit: limit ?? 10 })).filter((d) => can(principal, d.scope ?? '', 'read'));
       return ok(docs.map((d) => `- ${d.slug} (v${d.version}): ${d.title}`).join('\n') || '(no docs match)', docs);
     },
   );
@@ -290,7 +290,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     },
     async ({ scope, query, memory_limit, docs_limit, session_limit }) => {
       if (!can(principal, scope, 'read')) return deny(GROUP_MSG(scope, 'read'));
-      const slice = dox.context.assemble({
+      const slice = await dox.context.assemble({
         scope,
         query,
         memoryLimit: memory_limit,

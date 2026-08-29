@@ -1,6 +1,8 @@
 import type { MemoryEntry, MemoryHit } from '@agentdox/types';
 import type { Store } from './db.js';
 import { newId, nowIso, parseJsonArray, relevanceScore } from './util.js';
+import type { IndexService } from './indexer.js';
+import { fuseRRF, lexicalSearch, vectorSearch } from './retrieval.js';
 
 type Row = {
   id: string;
@@ -12,8 +14,14 @@ type Row = {
   created_at: string;
   updated_at: string;
   source: string | null;
-  embedding_json?: string | null;
 };
+
+/**
+ * Importance nudges relevance rather than competing with it. RRF scores sit around 1/60, so an
+ * additive boost would swamp the ranking; a small multiplier lifts a high-importance entry past
+ * near-neighbours without letting it outrank a genuinely better match.
+ */
+const IMPORTANCE_TILT = 0.05;
 
 export interface MemoryFilter {
   category?: string;
@@ -28,7 +36,14 @@ export interface MemorySearchOptions extends MemoryFilter {
 }
 
 export class MemoryService {
+  private indexer: IndexService | null = null;
+
   constructor(private readonly store: Store) {}
+
+  /** Wired by `AgentDox`; without it the service still works, just without the new indexes. */
+  setIndexer(indexer: IndexService): void {
+    this.indexer = indexer;
+  }
 
   toEntry(row: Row): MemoryEntry {
     return {
@@ -73,6 +88,7 @@ export class MemoryService {
         entry.updatedAt,
         entry.source ?? null,
       );
+    this.indexer?.indexMemory(entry);
     return entry;
   }
 
@@ -106,11 +122,13 @@ export class MemoryService {
         next.source ?? null,
         next.id,
       );
+    this.indexer?.indexMemory(next);
     return this.get(id);
   }
 
   remove(id: string): boolean {
     const res = this.store.db.prepare('DELETE FROM memory WHERE id = ?').run(id);
+    if (res.changes > 0) this.indexer?.removeMemory(id);
     return res.changes > 0;
   }
 
@@ -142,12 +160,59 @@ export class MemoryService {
     return rows.map((r) => this.toEntry(r));
   }
 
-  search(query: string, opts: MemorySearchOptions = {}): MemoryHit[] {
+  /**
+   * Hybrid search: BM25 fused with vector similarity, tilted by importance.
+   *
+   * Falls back to the original term-frequency scorer when the fused result is empty — an index
+   * that has not been built yet, or a query that is entirely stopwords, should still return
+   * something rather than nothing.
+   */
+  async search(query: string, opts: MemorySearchOptions = {}): Promise<MemoryHit[]> {
+    const limit = opts.limit ?? 20;
+    const boost = opts.importanceBoost ?? 1;
+    const pool = limit * 4;
+
+    const lists = [lexicalSearch(this.store.db, 'memory_fts', query, { scope: opts.category, limit: pool })];
+
+    const provider = this.indexer?.embeddingProvider;
+    if (provider) {
+      try {
+        const [queryVec] = await provider.embed([query], 'query');
+        if (queryVec) {
+          lists.push(
+            vectorSearch(this.store.db, 'memory', queryVec, {
+              scope: opts.category,
+              limit: pool,
+              model: provider.model,
+            }),
+          );
+        }
+      } catch {
+        // Provider unreachable: lexical-only results, which is the documented degradation.
+      }
+    }
+
+    const fused = fuseRRF(lists.filter((l) => l.length));
+    if (!fused.length) return this.legacySearch(query, opts);
+
+    const hits: MemoryHit[] = [];
+    for (const row of fused) {
+      const entry = this.get(row.id);
+      if (!entry) continue; // index drifted ahead of a delete
+      if (opts.target && entry.target !== opts.target) continue;
+      if (opts.tag && !entry.tags.includes(opts.tag)) continue;
+      hits.push({ entry, score: row.score * (1 + entry.importance * boost * IMPORTANCE_TILT) });
+    }
+    hits.sort((a, b) => b.score - a.score);
+    return hits.slice(0, limit);
+  }
+
+  /** The pre-BM25 scorer, kept as a floor for un-indexed stores and degenerate queries. */
+  private legacySearch(query: string, opts: MemorySearchOptions): MemoryHit[] {
     const boost = opts.importanceBoost ?? 1;
     const candidates = this.list({ category: opts.category, target: opts.target, tag: opts.tag, limit: 500 });
     const scored: MemoryHit[] = candidates.map((entry) => {
       const rel = relevanceScore(query, entry.content, entry.category ?? '', entry.target ?? '', entry.tags.join(' '));
-      // Composite: relevance dominates, importance nudges ties.
       const score = rel + entry.importance * boost * 0.1;
       return { entry, score };
     });

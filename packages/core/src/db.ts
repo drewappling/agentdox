@@ -28,6 +28,49 @@ CREATE TABLE IF NOT EXISTS docs (
 );
 CREATE INDEX IF NOT EXISTS idx_docs_scope ON docs(scope);
 
+-- Retrieval unit for docs: a passage, not a whole document. See chunking.ts and
+-- docs/architecture/rag.md — whole-doc retrieval plus a fixed char budget meant a 44k-char doc
+-- contributed only its preamble, whichever passage actually matched.
+CREATE TABLE IF NOT EXISTS doc_chunks (
+  id         TEXT PRIMARY KEY,
+  doc_id     TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
+  scope      TEXT,
+  slug       TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  heading    TEXT NOT NULL DEFAULT '',
+  ordinal    INTEGER NOT NULL,
+  content    TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON doc_chunks(doc_id);
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_scope ON doc_chunks(scope);
+
+-- BM25 indexes. The porter tokenizer stems (settlement/settlements); the old one did not.
+-- Kept as plain mirrors rather than external-content tables so a rebuild is a delete + insert
+-- and never depends on rowid alignment with the source table.
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+  id UNINDEXED, scope UNINDEXED, body, tokenize = 'porter unicode61'
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
+  id UNINDEXED, scope UNINDEXED, body, tokenize = 'porter unicode61'
+);
+
+-- Vectors, when an embedding provider is configured. content_hash lets a backfill skip rows
+-- whose text has not changed; model lets a model swap invalidate rather than silently mixing
+-- incompatible vector spaces.
+CREATE TABLE IF NOT EXISTS embeddings (
+  owner_kind   TEXT NOT NULL,
+  owner_id     TEXT NOT NULL,
+  scope        TEXT,
+  model        TEXT NOT NULL,
+  dims         INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  vec          BLOB NOT NULL,
+  updated_at   TEXT NOT NULL,
+  PRIMARY KEY (owner_kind, owner_id)
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_lookup ON embeddings(owner_kind, scope);
+
 CREATE TABLE IF NOT EXISTS doc_versions (
   doc_id     TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
   version    INTEGER NOT NULL,

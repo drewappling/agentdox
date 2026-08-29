@@ -29,8 +29,6 @@ export interface MemoryEntry {
   updatedAt: string;
   /** Optional provenance, e.g. "user-stated", "inferred", or a session id. */
   source?: string;
-  /** If a provider computed one, an embedding vector for semantic search. */
-  embedding?: number[];
 }
 
 export type MemoryTarget = 'user' | 'memory';
@@ -115,11 +113,30 @@ export interface MemoryHit {
 }
 
 /** A context slice: the fully assembled, ready-to-inject block. */
+/**
+ * One retrieved passage of a document. Retrieval works on passages rather than whole documents:
+ * scoring a 44k-char doc entire and then truncating it to a fixed budget injected its preamble
+ * instead of the part that matched.
+ */
+export interface DocPassage {
+  id: string;
+  docId: string;
+  slug: string;
+  title: string;
+  /** Heading breadcrumb within the doc, e.g. "Roads > What is NOT done". */
+  heading: string;
+  ordinal: number;
+  content: string;
+  score: number;
+}
+
 export interface ContextSlice {
   request: ContextRequest;
   assembledAt: string;
   memory: MemoryHit[];
   docs: Doc[];
+  /** Passages actually rendered into `prompt`, when the request carried a query. */
+  passages?: DocPassage[];
   sessionMessages: SessionMessage[];
   /** The rendered, prompt-ready text block built from the above. */
   prompt: string;

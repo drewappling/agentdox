@@ -1,6 +1,31 @@
 import type { Doc, DocVersion } from '@agentdox/types';
 import type { Store } from './db.js';
 import { newId, nowIso, parseJsonArray, relevanceScore } from './util.js';
+import type { IndexService } from './indexer.js';
+import { fuseRRF, lexicalSearch, vectorSearch } from './retrieval.js';
+
+/** A retrieved passage of a document, with enough breadcrumb to read on its own. */
+export interface ChunkHit {
+  id: string;
+  docId: string;
+  slug: string;
+  title: string;
+  /** Heading breadcrumb within the doc, e.g. "Roads > What is NOT done". */
+  heading: string;
+  ordinal: number;
+  content: string;
+  score: number;
+}
+
+type ChunkRow = {
+  id: string;
+  doc_id: string;
+  slug: string;
+  title: string;
+  heading: string;
+  ordinal: number;
+  content: string;
+};
 
 type Row = {
   id: string;
@@ -21,7 +46,14 @@ export interface DocFilter {
 }
 
 export class DocService {
+  private indexer: IndexService | null = null;
+
   constructor(private readonly store: Store) {}
+
+  /** Wired by `AgentDox`; without it docs are stored but not chunked or indexed. */
+  setIndexer(indexer: IndexService): void {
+    this.indexer = indexer;
+  }
 
   toDoc(row: Row): Doc {
     return {
@@ -69,6 +101,7 @@ export class DocService {
     this.store.db
       .prepare(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`)
       .run(doc.id, doc.version, doc.content, doc.updatedAt);
+    this.indexer?.indexDoc(doc);
     return doc;
   }
 
@@ -111,10 +144,12 @@ export class DocService {
     this.store.db
       .prepare(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`)
       .run(next.id, next.version, next.content, next.updatedAt);
+    this.indexer?.indexDoc(next);
     return this.get(id);
   }
 
   remove(id: string): boolean {
+    this.indexer?.removeDoc(id);
     const res = this.store.db.prepare('DELETE FROM docs WHERE id = ?').run(id);
     return res.changes > 0;
   }
@@ -136,7 +171,80 @@ export class DocService {
     return rows.map((r) => this.toDoc(r));
   }
 
-  search(query: string, filter: DocFilter = {}): Doc[] {
+  /**
+   * Passage-level retrieval — the unit that measurably matters. Scoring whole documents let a
+   * 44k-char doc win on term count and then contribute only its opening paragraphs; a chunk is
+   * both better ranked and directly injectable.
+   */
+  async searchChunks(query: string, filter: DocFilter = {}): Promise<ChunkHit[]> {
+    const limit = filter.limit ?? 10;
+    const pool = limit * 4;
+    const lists = [lexicalSearch(this.store.db, 'chunk_fts', query, { scope: filter.scope, limit: pool })];
+
+    const provider = this.indexer?.embeddingProvider;
+    if (provider) {
+      try {
+        const [queryVec] = await provider.embed([query], 'query');
+        if (queryVec) {
+          lists.push(
+            vectorSearch(this.store.db, 'chunk', queryVec, {
+              scope: filter.scope,
+              limit: pool,
+              model: provider.model,
+            }),
+          );
+        }
+      } catch {
+        // Provider unreachable: lexical-only, as documented.
+      }
+    }
+
+    const fused = fuseRRF(lists.filter((l) => l.length));
+    if (!fused.length) return [];
+
+    const byId = this.store.db.prepare(
+      'SELECT id, doc_id, slug, title, heading, ordinal, content FROM doc_chunks WHERE id = ?',
+    );
+    const hits: ChunkHit[] = [];
+    for (const row of fused.slice(0, limit)) {
+      const c = byId.get(row.id) as ChunkRow | undefined;
+      if (!c) continue;
+      hits.push({
+        id: c.id,
+        docId: c.doc_id,
+        slug: c.slug,
+        title: c.title,
+        heading: c.heading,
+        ordinal: c.ordinal,
+        content: c.content,
+        score: row.score,
+      });
+    }
+    return hits;
+  }
+
+  /**
+   * Document-level search, kept for callers that want whole docs. Ranked by the best chunk each
+   * document contributed, so ordering inherits the chunk-level improvement.
+   */
+  async search(query: string, filter: DocFilter = {}): Promise<Doc[]> {
+    const limit = filter.limit ?? 10;
+    const chunks = await this.searchChunks(query, { ...filter, limit: limit * 3 });
+    const seen = new Set<string>();
+    const docs: Doc[] = [];
+    for (const chunk of chunks) {
+      if (seen.has(chunk.docId)) continue;
+      seen.add(chunk.docId);
+      const doc = this.get(chunk.docId);
+      if (doc) docs.push(doc);
+      if (docs.length >= limit) break;
+    }
+    if (docs.length) return docs;
+    return this.legacySearch(query, filter);
+  }
+
+  /** Pre-chunking scorer, retained for stores whose index has not been built yet. */
+  private legacySearch(query: string, filter: DocFilter = {}): Doc[] {
     const rel = relevanceScore;
     return this.list({ ...filter, limit: 500 })
       .map((doc) => ({ doc, score: rel(query, doc.title, doc.content, doc.slug, doc.tags.join(' ')) }))
@@ -144,6 +252,17 @@ export class DocService {
       .sort((a, b) => b.score - a.score)
       .slice(0, filter.limit ?? 10)
       .map((x) => x.doc);
+  }
+
+  /** Every chunk of one document, in reading order. */
+  chunksFor(docId: string): ChunkHit[] {
+    const rows = this.store.db
+      .prepare('SELECT id, doc_id, slug, title, heading, ordinal, content FROM doc_chunks WHERE doc_id = ? ORDER BY ordinal')
+      .all(docId) as ChunkRow[];
+    return rows.map((c) => ({
+      id: c.id, docId: c.doc_id, slug: c.slug, title: c.title,
+      heading: c.heading, ordinal: c.ordinal, content: c.content, score: 0,
+    }));
   }
 
   history(id: string): DocVersion[] {
