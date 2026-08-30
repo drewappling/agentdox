@@ -135,42 +135,44 @@ export class IndexService {
 
   /** Rebuild every lexical index from the source tables. Safe to run at any time. */
   rebuildLexical(): { memory: number; chunks: number; messages: number } {
-    this.store.db.exec('DELETE FROM memory_fts');
-    const mem = this.store.db
-      .prepare('SELECT id, content, category, tags_json FROM memory')
-      .all() as { id: string; content: string; category: string | null; tags_json: string }[];
-    for (const row of mem) {
-      let tags: string[] = [];
-      try {
-        const parsed = JSON.parse(row.tags_json);
-        if (Array.isArray(parsed)) tags = parsed as string[];
-      } catch {
-        /* malformed tags -> index the content alone */
+    return this.store.tx(() => {
+      this.store.db.exec('DELETE FROM memory_fts');
+      const mem = this.store.db
+        .prepare('SELECT id, content, category, tags_json FROM memory')
+        .all() as { id: string; content: string; category: string | null; tags_json: string }[];
+      for (const row of mem) {
+        let tags: string[] = [];
+        try {
+          const parsed = JSON.parse(row.tags_json);
+          if (Array.isArray(parsed)) tags = parsed as string[];
+        } catch {
+          /* malformed tags -> index the content alone */
+        }
+        this.indexMemory({ id: row.id, content: row.content, category: row.category ?? undefined, tags });
       }
-      this.indexMemory({ id: row.id, content: row.content, category: row.category ?? undefined, tags });
-    }
 
-    this.store.db.exec('DELETE FROM chunk_fts');
-    this.store.db.exec('DELETE FROM doc_chunks');
-    const docs = this.store.db
-      .prepare('SELECT id, slug, title, content, scope FROM docs')
-      .all() as { id: string; slug: string; title: string; content: string; scope: string | null }[];
-    let chunks = 0;
-    for (const doc of docs) {
-      chunks += this.indexDoc({ ...doc, scope: doc.scope ?? undefined });
-    }
+      this.store.db.exec('DELETE FROM chunk_fts');
+      this.store.db.exec('DELETE FROM doc_chunks');
+      const docs = this.store.db
+        .prepare('SELECT id, slug, title, content, scope FROM docs')
+        .all() as { id: string; slug: string; title: string; content: string; scope: string | null }[];
+      let chunks = 0;
+      for (const doc of docs) {
+        chunks += this.indexDoc({ ...doc, scope: doc.scope ?? undefined });
+      }
 
-    this.store.db.exec('DELETE FROM message_fts');
-    const msgs = this.store.db
-      .prepare('SELECT m.id, m.role, m.content, s.scope FROM messages m JOIN sessions s ON s.id = m.session_id')
-      .all() as { id: number; role: string; content: string; scope: string }[];
-    for (const m of msgs) this.indexMessage(m);
+      this.store.db.exec('DELETE FROM message_fts');
+      const msgs = this.store.db
+        .prepare('SELECT m.id, m.role, m.content, s.scope FROM messages m JOIN sessions s ON s.id = m.session_id')
+        .all() as { id: number; role: string; content: string; scope: string }[];
+      for (const m of msgs) this.indexMessage(m);
 
-    // A rebuild drops doc_chunks wholesale, which orphans the vectors keyed to the old chunk
-    // ids — they are never matched again but still counted, and still scanned on every query.
-    this.pruneOrphanVectors();
+      // A rebuild drops doc_chunks wholesale, which orphans the vectors keyed to the old chunk
+      // ids — they are never matched again but still counted, and still scanned on every query.
+      this.pruneOrphanVectors();
 
-    return { memory: mem.length, chunks, messages: msgs.length };
+      return { memory: mem.length, chunks, messages: msgs.length };
+    });
   }
 
   // ---------- vectors (asynchronous, off the write path) ----------
@@ -186,6 +188,9 @@ export class IndexService {
   }> {
     const provider = this.provider;
     if (!provider) return { embedded: 0, pending: 0 };
+    // Reclaim vectors whose owner row is gone before scanning; the backfill runs continuously,
+    // so without this it never cleans up orphans left by a delete that bypassed a remove() path.
+    this.pruneOrphanVectors();
 
     type Pending = { kind: 'memory' | 'chunk' | 'message'; id: string; scope: string | null; text: string };
     const pending: Pending[] = [];

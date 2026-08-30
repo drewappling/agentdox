@@ -5,14 +5,16 @@ import { config } from './config';
  * Module-level runes store. Exposed as an object so components read the reactive
  * `.token` property (Svelte 5 forbids exporting a reassigned bare `$state`).
  */
+// The bearer token lives in sessionStorage, not localStorage: it is a wildcard-admin-capable
+// credential, so it must not survive a browser restart or be shared with other tabs.
 export const auth = $state<{ token: string | null }>({
-  token: typeof localStorage !== 'undefined' ? localStorage.getItem('agentdox:token') : null,
+  token: typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('agentdox:token') : null,
 });
 
 export function setToken(t: string | null): void {
   auth.token = t;
-  if (t) localStorage.setItem('agentdox:token', t);
-  else localStorage.removeItem('agentdox:token');
+  if (t) sessionStorage.setItem('agentdox:token', t);
+  else sessionStorage.removeItem('agentdox:token');
 }
 
 /** The currently-selected project (slug). Filters the whole UI to one scope. */

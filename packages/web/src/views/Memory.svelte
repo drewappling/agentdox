@@ -3,7 +3,7 @@
   import { api, currentProject } from '../lib/store.svelte';
 
   let entries = $state<Array<Record<string, any>>>([]);
-  let category = $state('demo');
+  let category = $state('');
   let content = $state('');
   let error = $state('');
   let busy = $state(false);

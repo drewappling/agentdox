@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test';
 
+// Credentials + IdP host are environment-overridable so the suite isn't pinned to one machine.
+const E2E_USER = process.env.E2E_USER ?? 'alice';
+const E2E_PASS = process.env.E2E_PASS ?? 'demo123';
+const E2E_KEYCLOAK = process.env.E2E_KEYCLOAK_HOST ?? 'localhost:8090';
+const E2E_SCOPE = 'demo';
+
 /** Full user journey: PKCE login -> memory -> docs (split editor) -> context. */
 test('user journey: login, memory, docs, sessions, context, projects', async ({ page }) => {
   // --- login page ---
@@ -8,9 +14,9 @@ test('user journey: login, memory, docs, sessions, context, projects', async ({ 
   await page.getByRole('button', { name: 'Continue with Keycloak' }).click();
 
   // Keycloak login (separate origin)
-  await page.waitForURL(/localhost:8090/);
-  await page.fill('#username', 'alice');
-  await page.fill('#password', 'demo123');
+  await page.waitForURL(new RegExp(E2E_KEYCLOAK.replace(/[.]/g, '\\.')));
+  await page.fill('#username', E2E_USER);
+  await page.fill('#password', E2E_PASS);
   await page.press('#password', 'Enter');
 
   // back on the app, Memory view
@@ -18,6 +24,7 @@ test('user journey: login, memory, docs, sessions, context, projects', async ({ 
 
   // --- memory: create + appears in list ---
   const fact = `e2e memory ${Date.now()}`;
+  await page.fill('input[placeholder="scope / category"]', E2E_SCOPE);
   await page.fill('input[placeholder="a durable fact… (keep it compact & high-signal)"]', fact);
   await page.locator('form button').click();
   await expect(page.locator('.mem li', { hasText: fact })).toBeVisible();
@@ -26,6 +33,7 @@ test('user journey: login, memory, docs, sessions, context, projects', async ({ 
   await page.getByRole('link', { name: 'Docs' }).click();
   await page.waitForURL(/#\/docs/);
   await expect(page.getByRole('heading', { name: 'Docs' })).toBeVisible();
+  await page.locator('.list .scope input').fill(E2E_SCOPE);
   const slug = `e2e/${Date.now()}`;
   await page.fill('[placeholder="slug (guides/x)"]', slug);
   await page.getByRole('button', { name: 'new' }).click();
@@ -40,6 +48,7 @@ test('user journey: login, memory, docs, sessions, context, projects', async ({ 
   await page.getByRole('link', { name: 'Context' }).click();
   await page.waitForURL(/#\/context/);
   await expect(page.getByRole('heading', { name: 'Context assembly' })).toBeVisible();
+  await page.locator('.controls input').first().fill(E2E_SCOPE);
   await page.getByRole('button', { name: 'assemble' }).click();
   await expect(page.locator('.meta')).toContainText('chars:');
   // auto-context baseline: force a refresh and see the saved snapshot

@@ -314,7 +314,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   });
 
   app.get('/docs/slug/:slug', async (req, reply) => {
-    const doc = dox.docs.getBySlug((req.params as { slug: string }).slug);
+    const doc = dox.docs.getBySlug((req.params as { slug: string }).slug, (req.query as { scope?: string }).scope);
     if (!doc) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), doc.scope ?? '', 'read')) return;
     return doc;

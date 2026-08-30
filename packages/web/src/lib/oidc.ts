@@ -32,6 +32,12 @@ export async function startLogin(): Promise<void> {
 /** If the current URL carries an auth code, verify state + exchange it for an access token. */
 export async function handleLoginRedirect(): Promise<string | null> {
   const url = new URL(window.location.href);
+  const oidcError = url.searchParams.get('error');
+  if (oidcError) {
+    const desc = url.searchParams.get('error_description');
+    window.history.replaceState({}, '', url.origin + url.pathname);
+    throw new Error(`OIDC login failed: ${desc ?? oidcError}`);
+  }
   const code = url.searchParams.get('code');
   if (!code) return null;
 
@@ -41,10 +47,11 @@ export async function handleLoginRedirect(): Promise<string | null> {
     throw new Error('OIDC state mismatch — login aborted');
   }
 
-  const verifier = sessionStorage.getItem('agentdox:pkce_verifier') ?? '';
-  // one-time use
+  const verifier = sessionStorage.getItem('agentdox:pkce_verifier');
+  // one-time use — clear both regardless of outcome
   sessionStorage.removeItem('agentdox:pkce_verifier');
   sessionStorage.removeItem('agentdox:oidc_state');
+  if (!verifier) throw new Error('PKCE verifier missing (session storage was cleared) — please retry login');
 
   const body = new URLSearchParams({
     grant_type: 'authorization_code',

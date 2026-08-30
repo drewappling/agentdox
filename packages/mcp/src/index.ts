@@ -206,10 +206,10 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     {
       title: 'Read doc',
       description: 'Read a doc by id or slug (needs read on its scope).',
-      inputSchema: { id: z.string().optional(), slug: z.string().optional() },
+      inputSchema: { id: z.string().optional(), slug: z.string().optional(), scope: z.string().optional() },
     },
-    async ({ id, slug }) => {
-      const doc = id ? dox.docs.get(id) : slug ? dox.docs.getBySlug(slug) : null;
+    async ({ id, slug, scope }) => {
+      const doc = id ? dox.docs.get(id) : slug ? dox.docs.getBySlug(slug, scope) : null;
       if (!doc) return { isError: true, content: [block('doc not found')] };
       if (!can(principal, doc.scope ?? '', 'read')) return deny(GROUP_MSG(doc.scope ?? '', 'read'));
       return ok(`# ${doc.title} (v${doc.version})\n\n${doc.content}`, doc);

@@ -74,8 +74,7 @@ export class ProjectService {
     // One transaction so a crash can't leave a project half-deleted. Retrieval indexes are keyed
     // by scope, so drop them here too: the per-entity remove() methods that normally clean the
     // FTS/vector rows are bypassed by these bulk deletes.
-    this.store.db.exec('BEGIN');
-    try {
+    this.store.tx(() => {
       this.store.db.prepare('DELETE FROM memory WHERE category = ?').run(slug);
       this.store.db.prepare('DELETE FROM docs WHERE scope = ?').run(slug); // cascades doc_versions
       this.store.db.prepare('DELETE FROM sessions WHERE scope = ?').run(slug); // cascades messages
@@ -85,11 +84,7 @@ export class ProjectService {
       this.store.db.prepare('DELETE FROM message_fts WHERE scope = ?').run(slug);
       this.store.db.prepare('DELETE FROM embeddings WHERE scope = ?').run(slug);
       this.store.db.prepare('DELETE FROM projects WHERE slug = ?').run(slug);
-      this.store.db.exec('COMMIT');
-    } catch (e) {
-      this.store.db.exec('ROLLBACK');
-      throw e;
-    }
+    });
     return true;
   }
 }

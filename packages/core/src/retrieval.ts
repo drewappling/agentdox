@@ -87,8 +87,14 @@ export function lexicalSearch(
       .prepare(`SELECT id, bm25(${table}) AS rank FROM ${table} WHERE ${where} ORDER BY rank LIMIT ?`)
       .all(...args) as { id: string; rank: number }[];
     return rows.map((r) => ({ id: r.id, score: -r.rank }));
-  } catch {
-    return []; // malformed MATCH expression -> no lexical arm, not a failed request
+  } catch (err) {
+    // A malformed MATCH is an expected no-op (the lexical arm just contributes nothing). Anything
+    // else — a locked db, a corrupt FTS table — is a real fault that should be visible, not hidden.
+    const msg = (err as Error).message ?? '';
+    if (!/fts5|malformed|syntax error|no such/i.test(msg)) {
+      console.error(`[agentdox] lexicalSearch(${table}) failed: ${msg}`);
+    }
+    return [];
   }
 }
 

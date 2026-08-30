@@ -90,14 +90,19 @@ export class SessionService {
   }
 
   append(sessionId: string, message: Omit<SessionMessage, 'at'>): SessionMessage | null {
-    const session = this.get(sessionId);
-    if (!session) return null;
+    // Only the scope is needed to index the message; loading the full history (messages(), up to
+    // 1000 rows + JSON parse) on every turn was O(history) work just to check existence.
+    const row = this.store.db.prepare('SELECT scope FROM sessions WHERE id = ?').get(sessionId) as { scope: string } | undefined;
+    if (!row) return null;
     const full: SessionMessage = { ...message, at: nowIso() };
-    const res = this.store.db
-      .prepare('INSERT INTO messages (session_id, role, content, at, refs_json) VALUES (?, ?, ?, ?, ?)')
-      .run(sessionId, full.role, full.content, full.at, JSON.stringify(full.refs ?? []));
-    const id = Number(res.lastInsertRowid);
-    this.indexer?.indexMessage({ id, scope: session.scope, role: full.role, content: full.content });
+    const id = this.store.tx(() => {
+      const res = this.store.db
+        .prepare('INSERT INTO messages (session_id, role, content, at, refs_json) VALUES (?, ?, ?, ?, ?)')
+        .run(sessionId, full.role, full.content, full.at, JSON.stringify(full.refs ?? []));
+      const msgId = Number(res.lastInsertRowid);
+      this.indexer?.indexMessage({ id: msgId, scope: row.scope, role: full.role, content: full.content });
+      return msgId;
+    });
     return { ...full, id };
   }
 

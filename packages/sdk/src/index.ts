@@ -23,6 +23,20 @@ export interface MemoryFilter {
   limit?: number;
 }
 
+/** Error thrown for a non-2xx API response. The raw server body is kept on `.body` (for logging),
+ * out of `.message`, so UIs don't render Fastify/SQLite internals to end users. */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly method: string,
+    readonly path: string,
+    readonly body: string,
+  ) {
+    super(`agentdox API ${method} ${path} failed (${status})`);
+    this.name = 'ApiError';
+  }
+}
+
 /** Thin typed client for the agentdox REST API. Works in Node and browser. */
 export class AgentDoxClient {
   constructor(
@@ -57,7 +71,7 @@ export class AgentDoxClient {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`agentdox API ${method} ${path} failed (${res.status}): ${text}`);
+      throw new ApiError(res.status, method, path, text);
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
@@ -114,7 +128,8 @@ export class AgentDoxClient {
         limit: filter.limit?.toString(),
       }),
     get: (id: string) => this.request<Doc>('GET', `/docs/${id}`),
-    getBySlug: (slug: string) => this.request<Doc>('GET', `/docs/slug/${encodeURIComponent(slug)}`),
+    getBySlug: (slug: string, scope?: string) =>
+      this.request<Doc>('GET', `/docs/slug/${encodeURIComponent(slug)}${scope === undefined ? '' : `?scope=${encodeURIComponent(scope)}`}`),
     create: (input: { slug: string; title: string; content: string; tags?: string[]; scope?: string }) =>
       this.request<Doc>('POST', '/docs', input),
     update: (id: string, patch: Partial<Pick<Doc, 'title' | 'content' | 'tags' | 'scope' | 'slug'>>) =>

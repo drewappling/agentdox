@@ -3,7 +3,7 @@
   import { api, currentProject } from '../lib/store.svelte';
 
   let sessions = $state<Array<Record<string, any>>>([]);
-  let scope = $state('demo');
+  let scope = $state('');
   let open: Record<string, any> | null = $state(null);
   let error = $state('');
   let seq = 0;
@@ -96,7 +96,7 @@
       {#if open}
         <h2>{open.title || open.id} <span class="scope">{open.scope}</span></h2>
         <div class="msgs">
-          {#each open.messages as m (m.at)}
+          {#each open.messages as m, i (m.id ?? i)}
             <div class="msg {m.role}">
               <span class="r">{m.role}</span>
               <span class="c">{m.content}</span>

@@ -4,7 +4,7 @@
   import { renderMarkdown } from '../lib/markdown';
 
   let docs = $state<Array<Record<string, any>>>([]);
-  let scope = $state('demo');
+  let scope = $state('');
   let current = $state<Record<string, any> | null>(null);
   let html = $state('');
   let source = $state('');

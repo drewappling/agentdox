@@ -17,7 +17,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_importance ON memory(importance);
 
 CREATE TABLE IF NOT EXISTS docs (
   id          TEXT PRIMARY KEY,
-  slug        TEXT NOT NULL UNIQUE,
+  slug        TEXT NOT NULL,
   title       TEXT NOT NULL,
   content     TEXT NOT NULL,
   tags_json   TEXT NOT NULL DEFAULT '[]',
@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS docs (
   scope       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_docs_scope ON docs(scope);
+-- Slug is unique per scope, not globally: two projects may each have a README or overview doc.
+-- COALESCE folds the null (scope-less) bucket so slugs stay unique within it too.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_docs_scope_slug ON docs(COALESCE(scope, ''), slug);
 
 -- Retrieval unit for docs: a passage, not a whole document. See chunking.ts and
 -- docs/architecture/rag.md — whole-doc retrieval plus a fixed char budget meant a 44k-char doc
@@ -145,6 +148,8 @@ CREATE TABLE IF NOT EXISTS context_briefs (
 
 export interface Store {
   readonly db: DatabaseSync;
+  /** Run `fn` in one transaction: commit on return, roll back on throw. Not reentrant. */
+  tx<T>(fn: () => T): T;
   close(): void;
 }
 
@@ -152,9 +157,24 @@ export function openDatabase(path: string): Store {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
+  // Wait for a competing writer instead of throwing SQLITE_BUSY at once: WAL allows one writer,
+  // and a second process (seed, CLI, operator) must not abort a write sequence midway.
+  db.exec('PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
+  const tx = <T>(fn: () => T): T => {
+    db.exec('BEGIN');
+    try {
+      const result = fn();
+      db.exec('COMMIT');
+      return result;
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  };
   return {
     db,
+    tx,
     close: () => db.close(),
   };
 }

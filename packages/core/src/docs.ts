@@ -85,26 +85,28 @@ export class DocService {
       updatedAt: now,
       scope: input.scope,
     };
-    this.store.db
-      .prepare(
-        `INSERT INTO docs (id, slug, title, content, tags_json, version, created_at, updated_at, scope)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        doc.id,
-        doc.slug,
-        doc.title,
-        doc.content,
-        JSON.stringify(doc.tags),
-        doc.version,
-        doc.createdAt,
-        doc.updatedAt,
-        doc.scope ?? null,
-      );
-    this.store.db
-      .prepare(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`)
-      .run(doc.id, doc.version, doc.content, doc.updatedAt);
-    this.indexer?.indexDoc(doc);
+    this.store.tx(() => {
+      this.store.db
+        .prepare(
+          `INSERT INTO docs (id, slug, title, content, tags_json, version, created_at, updated_at, scope)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          doc.id,
+          doc.slug,
+          doc.title,
+          doc.content,
+          JSON.stringify(doc.tags),
+          doc.version,
+          doc.createdAt,
+          doc.updatedAt,
+          doc.scope ?? null,
+        );
+      this.store.db
+        .prepare(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`)
+        .run(doc.id, doc.version, doc.content, doc.updatedAt);
+      this.indexer?.indexDoc(doc);
+    });
     return doc;
   }
 
@@ -113,8 +115,10 @@ export class DocService {
     return row ? this.toDoc(row) : null;
   }
 
-  getBySlug(slug: string): Doc | null {
-    const row = this.store.db.prepare('SELECT * FROM docs WHERE slug = ?').get(slug) as Row | undefined;
+  getBySlug(slug: string, scope?: string): Doc | null {
+    const row = (scope === undefined
+      ? this.store.db.prepare('SELECT * FROM docs WHERE slug = ? ORDER BY updated_at DESC LIMIT 1').get(slug)
+      : this.store.db.prepare('SELECT * FROM docs WHERE slug = ? AND scope IS ?').get(slug, scope)) as Row | undefined;
     return row ? this.toDoc(row) : null;
   }
 
@@ -130,24 +134,26 @@ export class DocService {
       updatedAt: nowIso(),
       createdAt: existing.createdAt,
     };
-    this.store.db
-      .prepare(
-        `UPDATE docs SET slug = ?, title = ?, content = ?, tags_json = ?, version = ?, updated_at = ?, scope = ? WHERE id = ?`,
-      )
-      .run(
-        next.slug,
-        next.title,
-        next.content,
-        JSON.stringify(next.tags),
-        next.version,
-        next.updatedAt,
-        next.scope ?? null,
-        next.id,
-      );
-    this.store.db
-      .prepare(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`)
-      .run(next.id, next.version, next.content, next.updatedAt);
-    this.indexer?.indexDoc(next);
+    this.store.tx(() => {
+      this.store.db
+        .prepare(
+          `UPDATE docs SET slug = ?, title = ?, content = ?, tags_json = ?, version = ?, updated_at = ?, scope = ? WHERE id = ?`,
+        )
+        .run(
+          next.slug,
+          next.title,
+          next.content,
+          JSON.stringify(next.tags),
+          next.version,
+          next.updatedAt,
+          next.scope ?? null,
+          next.id,
+        );
+      this.store.db
+        .prepare(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`)
+        .run(next.id, next.version, next.content, next.updatedAt);
+      this.indexer?.indexDoc(next);
+    });
     return this.get(id);
   }
 

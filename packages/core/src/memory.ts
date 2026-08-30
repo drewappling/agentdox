@@ -23,6 +23,9 @@ type Row = {
  */
 const IMPORTANCE_TILT = 0.05;
 
+/** Importance is documented as 0..1; clamp so a stray value can't dominate ranking. */
+const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
+
 export interface MemoryFilter {
   category?: string;
   target?: string;
@@ -64,7 +67,7 @@ export class MemoryService {
     const entry: MemoryEntry = {
       id: input.id ?? newId('mem'),
       content: input.content,
-      importance: input.importance ?? 0.5,
+      importance: clamp01(input.importance ?? 0.5),
       tags: input.tags ?? [],
       createdAt: now,
       updatedAt: now,
@@ -72,23 +75,25 @@ export class MemoryService {
       ...(input.target ? { target: input.target } : {}),
       ...(input.source ? { source: input.source } : {}),
     };
-    this.store.db
-      .prepare(
-        `INSERT INTO memory (id, content, category, target, importance, tags_json, created_at, updated_at, source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        entry.id,
-        entry.content,
-        entry.category ?? null,
-        entry.target ?? null,
-        entry.importance,
-        JSON.stringify(entry.tags),
-        entry.createdAt,
-        entry.updatedAt,
-        entry.source ?? null,
-      );
-    this.indexer?.indexMemory(entry);
+    this.store.tx(() => {
+      this.store.db
+        .prepare(
+          `INSERT INTO memory (id, content, category, target, importance, tags_json, created_at, updated_at, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          entry.id,
+          entry.content,
+          entry.category ?? null,
+          entry.target ?? null,
+          entry.importance,
+          JSON.stringify(entry.tags),
+          entry.createdAt,
+          entry.updatedAt,
+          entry.source ?? null,
+        );
+      this.indexer?.indexMemory(entry);
+    });
     return entry;
   }
 
@@ -107,22 +112,25 @@ export class MemoryService {
       createdAt: existing.createdAt,
       updatedAt: nowIso(),
     };
-    this.store.db
-      .prepare(
-        `UPDATE memory SET content = ?, category = ?, target = ?, importance = ?, tags_json = ?, updated_at = ?, source = ?
-         WHERE id = ?`,
-      )
-      .run(
-        next.content,
-        next.category ?? null,
-        next.target ?? null,
-        next.importance,
-        JSON.stringify(next.tags),
-        next.updatedAt,
-        next.source ?? null,
-        next.id,
-      );
-    this.indexer?.indexMemory(next);
+    next.importance = clamp01(next.importance);
+    this.store.tx(() => {
+      this.store.db
+        .prepare(
+          `UPDATE memory SET content = ?, category = ?, target = ?, importance = ?, tags_json = ?, updated_at = ?, source = ?
+           WHERE id = ?`,
+        )
+        .run(
+          next.content,
+          next.category ?? null,
+          next.target ?? null,
+          next.importance,
+          JSON.stringify(next.tags),
+          next.updatedAt,
+          next.source ?? null,
+          next.id,
+        );
+      this.indexer?.indexMemory(next);
+    });
     return this.get(id);
   }
 

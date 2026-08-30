@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api, currentProject } from '../lib/store.svelte';
 
-  let scope = $state('demo');
+  let scope = $state('');
   let query = $state('');
   let memoryLimit = $state(12);
   let docsLimit = $state(2);
