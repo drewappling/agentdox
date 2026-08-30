@@ -202,13 +202,17 @@ export class IndexService {
     const memArgs = opts.scope ? [provider.model, opts.scope] : [provider.model];
     const memRows = this.store.db
       .prepare(
-        `SELECT m.id, m.category AS scope, m.content, e.content_hash FROM memory m
+        `SELECT m.id, m.category AS scope, m.content, e.content_hash, e.scope AS emb_scope FROM memory m
          LEFT JOIN embeddings e ON e.owner_kind = 'memory' AND e.owner_id = m.id AND e.model = ?
          WHERE 1 = 1 ${scopeSql}`,
       )
-      .all(...memArgs) as { id: string; scope: string | null; content: string; content_hash: string | null }[];
+      .all(...memArgs) as { id: string; scope: string | null; content: string; content_hash: string | null; emb_scope: string | null }[];
     for (const r of memRows) {
-      if (stale(r.content, r.content_hash)) {
+      // Re-embed when the text changed OR the entry moved to another scope (a category patch):
+      // the vector's `scope` column must follow, or it stays searchable under the old scope and
+      // invisible under the new one — a cross-scope leak, since category == the tenancy boundary.
+      const scopeMoved = r.content_hash !== null && r.emb_scope !== r.scope;
+      if (scopeMoved || stale(r.content, r.content_hash)) {
         pending.push({ kind: 'memory', id: r.id, scope: r.scope, text: r.content });
       }
     }

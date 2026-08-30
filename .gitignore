@@ -10,6 +10,8 @@ build/
 data/
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 
@@ -21,6 +23,9 @@ deploy/.env
 deploy/.env.local
 # per-repo agentdox config: holds the global PAT (instance admin) — never commit
 .env.agentdox
+
+# Private operational scratch (contains private project names / real store IDs) — never ship
+/MEMORY-SCOPE-MIGRATION.md
 
 # Logs
 *.log

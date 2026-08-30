@@ -49,7 +49,10 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   }
 
   const app = Fastify({ logger: true });
-  app.register(cors, { origin: true });
+  const corsOrigins = (mergedEnv.AGENTDOX_CORS_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  // Reflect any origin by default (local/dev); restrict to an explicit allowlist in shared
+  // deployments by setting AGENTDOX_CORS_ORIGINS to a comma-separated list.
+  app.register(cors, { origin: corsOrigins.length ? corsOrigins : true });
 
   // Preserve raw JSON bodies (needed for the MCP streamable transport) while keeping the
   // default parsed-object behavior on `request.body` for all other routes.
@@ -72,7 +75,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     }
   });
 
-  app.get('/health', async () => ({ ok: true, service: 'agentdox', auth: auth.enabled, db: dbPath }));
+  app.get('/health', async () => ({ ok: true, service: 'agentdox', auth: auth.enabled, db: true }));
 
   // ---- PAT management (requires wildcard admin) ----
   const adminOnly = (req: FastifyRequest, reply: FastifyReply): boolean => {
@@ -206,13 +209,20 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   app.get('/memory/search', async (req, reply) => {
     const q = req.query as { q?: string; category?: string; target?: string; tag?: string; limit?: string };
     if (!q.q) return [];
-    if (q.category && !guard(req, reply, auth, principalOf(req), q.category, 'read')) return;
-    return dox.memory.search(q.q, {
+    const p = principalOf(req);
+    if (q.category) {
+      if (!guard(req, reply, auth, p, q.category, 'read')) return;
+    } else if (auth.enabled && !guard(req, reply, auth, p, undefined, 'read')) {
+      return;
+    }
+    const results = await dox.memory.search(q.q, {
       category: q.category,
       target: q.target,
       tag: q.tag,
       limit: q.limit ? parseInt(q.limit, 10) : undefined,
     });
+    if (!auth.enabled) return results;
+    return results.filter((h) => scopeGrant(validatePrincipal(p), h.entry.category ?? '', 'read'));
   });
 
   app.get('/memory/:id', async (req, reply) => {
@@ -260,15 +270,29 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   // ---- Docs ----
   app.get('/docs', async (req, reply) => {
     const q = req.query as { scope?: string; tag?: string; limit?: string };
-    if (q.scope && !guard(req, reply, auth, principalOf(req), q.scope, 'read')) return;
-    return dox.docs.list({ scope: q.scope, tag: q.tag, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+    const p = principalOf(req);
+    if (q.scope) {
+      if (!guard(req, reply, auth, p, q.scope, 'read')) return;
+    } else if (auth.enabled && !guard(req, reply, auth, p, undefined, 'read')) {
+      return;
+    }
+    const docs = dox.docs.list({ scope: q.scope, tag: q.tag, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+    if (!auth.enabled) return docs;
+    return docs.filter((d) => scopeGrant(validatePrincipal(p), d.scope ?? '', 'read'));
   });
 
   app.get('/docs/search', async (req, reply) => {
     const q = req.query as { q?: string; scope?: string; limit?: string };
     if (!q.q) return [];
-    if (q.scope && !guard(req, reply, auth, principalOf(req), q.scope, 'read')) return;
-    return dox.docs.search(q.q, { scope: q.scope, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+    const p = principalOf(req);
+    if (q.scope) {
+      if (!guard(req, reply, auth, p, q.scope, 'read')) return;
+    } else if (auth.enabled && !guard(req, reply, auth, p, undefined, 'read')) {
+      return;
+    }
+    const results = await dox.docs.search(q.q, { scope: q.scope, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+    if (!auth.enabled) return results;
+    return results.filter((d) => scopeGrant(validatePrincipal(p), d.scope ?? '', 'read'));
   });
 
   /**
@@ -278,8 +302,15 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   app.get('/docs/passages', async (req, reply) => {
     const q = req.query as { q?: string; scope?: string; limit?: string };
     if (!q.q) return [];
-    if (q.scope && !guard(req, reply, auth, principalOf(req), q.scope, 'read')) return;
-    return dox.docs.searchChunks(q.q, { scope: q.scope, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+    const p = principalOf(req);
+    if (q.scope) {
+      if (!guard(req, reply, auth, p, q.scope, 'read')) return;
+    } else if (auth.enabled && !guard(req, reply, auth, p, undefined, 'read')) {
+      return;
+    }
+    const passages = await dox.docs.searchChunks(q.q, { scope: q.scope, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+    if (!auth.enabled) return passages;
+    return passages.filter((c) => scopeGrant(validatePrincipal(p), c.scope ?? '', 'read'));
   });
 
   app.get('/docs/slug/:slug', async (req, reply) => {
@@ -334,8 +365,15 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   // ---- Sessions ----
   app.get('/sessions', async (req, reply) => {
     const q = req.query as { scope?: string; limit?: string };
-    if (q.scope && !guard(req, reply, auth, principalOf(req), q.scope, 'read')) return;
-    return dox.sessions.list(q.scope, q.limit ? parseInt(q.limit, 10) : undefined);
+    const p = principalOf(req);
+    if (q.scope) {
+      if (!guard(req, reply, auth, p, q.scope, 'read')) return;
+    } else if (auth.enabled && !guard(req, reply, auth, p, undefined, 'read')) {
+      return;
+    }
+    const sessions = dox.sessions.list(q.scope, q.limit ? parseInt(q.limit, 10) : undefined);
+    if (!auth.enabled) return sessions;
+    return sessions.filter((s) => scopeGrant(validatePrincipal(p), s.scope ?? '', 'read'));
   });
 
   app.post<{ Body: { scope: string; title?: string } }>('/sessions', async (req, reply) => {
@@ -436,7 +474,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   });
 
   // ---- MCP over HTTP (streamable transport, one authenticated session per bearer token) ----
-  const mcpSessions = new Map<string, { transport: StreamableHTTPServerTransport; close: () => void }>();
+  const mcpSessions = new Map<string, { transport: StreamableHTTPServerTransport; close: () => void; sub: string | null }>();
   const mcpErr = (res: ServerResponse, status: number, message: string) => {
     res.statusCode = status;
     res.setHeader('content-type', 'application/json');
@@ -445,11 +483,17 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
 
   app.all('/mcp', async (request, reply) => {
     const sessionId = request.headers['mcp-session-id'] as string | undefined;
+    const p = principalOf(request);
     reply.hijack(); // we own the raw node response from here
+
+    // A session is bound to the principal that created it. Continuation/GET/DELETE requests must
+    // present the same principal, or a leaked session id would let anyone act as its owner.
+    const ownedByCaller = (s: { sub: string | null }): boolean => !auth.enabled || (!!p && s.sub === p.sub);
 
     if (request.method === 'DELETE') {
       if (sessionId) {
         const s = mcpSessions.get(sessionId);
+        if (s && !ownedByCaller(s)) { mcpErr(reply.raw, 403, 'forbidden'); return; }
         if (s) { s.close(); mcpSessions.delete(sessionId); }
       }
       reply.raw.statusCode = 204;
@@ -460,6 +504,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     if (request.method === 'GET') { // SSE stream for an existing session
       const s = sessionId ? mcpSessions.get(sessionId) : undefined;
       if (!s) { mcpErr(reply.raw, 404, 'unknown session'); return; }
+      if (!ownedByCaller(s)) { mcpErr(reply.raw, 403, 'forbidden'); return; }
       await s.transport.handleRequest(request.raw, reply.raw);
       return;
     }
@@ -471,12 +516,12 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     if (sessionId) { // continue an existing session
       const s = mcpSessions.get(sessionId);
       if (!s) { mcpErr(reply.raw, 404, 'unknown session'); return; }
+      if (!ownedByCaller(s)) { mcpErr(reply.raw, 403, 'forbidden'); return; }
       await s.transport.handleRequest(request.raw, reply.raw, parsedBody);
       return;
     }
 
     // New session: resolve the caller's principal (bearer) — reject if auth is on and unauthenticated.
-    const p = principalOf(request);
     if (auth.enabled && !p) { mcpErr(reply.raw, 401, 'unauthorized: send a valid bearer token'); return; }
 
     const id = randomUUID();
@@ -484,7 +529,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     try {
       const mcp = createMcpServer(dox, p);
       await mcp.connect(transport);
-      mcpSessions.set(id, { transport, close: () => void transport.close().catch(() => undefined) });
+      mcpSessions.set(id, { transport, close: () => void transport.close().catch(() => undefined), sub: p?.sub ?? null });
       await transport.handleRequest(request.raw, reply.raw, parsedBody);
     } catch (e) {
       void transport.close().catch(() => undefined);

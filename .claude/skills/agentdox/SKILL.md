@@ -24,8 +24,6 @@ stop at the first hit:
    a folder with no scope is just a project that hasn't been onboarded, and the global token
    already covers it.
 
-Known scopes: `ashlands` (E:/projects/ashlands/ashlands), `omp-router` (E:/projects/omp-router).
-
 ### Creating the scope for a folder that has never had one
 
 Deterministic, so the same folder always resolves to the same slug:
@@ -33,11 +31,11 @@ Deterministic, so the same folder always resolves to the same slug:
 1. Take the **repo root** folder name — `git rev-parse --show-toplevel`, not the cwd. A
    subdirectory must never become its own project.
 2. Slugify it: lowercase, every run of non-alphanumerics → a single `-`, trim leading/trailing
-   `-`. `E:/projects/My_App` → `my-app`.
+   `-`. `/path/to/My_App` → `my-app`.
 3. `project_list` **before creating.**
    - **Exact match** — usually this repo, already onboarded elsewhere; adopt it. But an exact
      match reached from a folder that has never been onboarded can also be a *collision*: two
-     unrelated repos with the same folder name (`E:/projects/foo/api` and `E:/work/api`) both
+     unrelated repos with the same folder name (`/work/foo/api` and `/home/api`) both
      slugify to `api`, and adopting blindly merges two projects into one namespace. Check the
      existing project's brief/description first; if it clearly describes a different codebase,
      stop and ask for a distinguishing slug.
@@ -191,7 +189,7 @@ facts. Record the *why* of a decision, not just the *what*.
 ## Searching well
 
 Retrieval is hybrid — keyword *and* meaning — so you do not have to guess the stored wording.
-Ask in your own words; exact identifiers (`SettlementLayout.Build`, `AGENTDOX_TOKEN`) work too.
+Ask in your own words; exact identifiers (`OrderService.submit`, `AGENTDOX_TOKEN`) work too.
 
 **Prefer `docs_passages` over `docs_search`** when you want the part of a doc that answers a
 question. `docs_search` hands back whole documents, which then get truncated — and the

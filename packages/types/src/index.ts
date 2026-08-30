@@ -215,7 +215,7 @@ export interface ProjectBrief {
  */
 export interface Project {
   id: string;
-  /** URL-ish, immutable key; also the scope namespace (e.g. "ashlands"). */
+  /** URL-ish, immutable key; also the scope namespace (e.g. "acme"). */
   slug: string;
   /** Human-friendly display name. */
   name: string;

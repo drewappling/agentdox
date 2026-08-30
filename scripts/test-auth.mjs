@@ -38,7 +38,7 @@ const ISSUER = `http://127.0.0.1:${oidc.address().port}`;
 const AUDIENCE = 'agentdox-web';
 
 const sign = (claims = {}) =>
-  new SignJWT({ name: 'Drew', email: 'drew@example.com', 'agentdox:scopes': 'demo:write ashlands:read', ...claims })
+  new SignJWT({ name: 'Alice', email: 'alice@example.com', 'agentdox:scopes': 'demo:write acme:read', ...claims })
     .setProtectedHeader({ alg: 'RS256', kid })
     .setSubject('user-123')
     .setIssuedAt()
@@ -52,7 +52,7 @@ const provider = await OidcAuthProvider.create({ issuer: ISSUER, audience: AUDIE
 // valid token
 let good = await provider.verify(await sign());
 check('OIDC: valid token accepted', good.ok && good.principal.sub === 'user-123' && good.principal.kind === 'oidc');
-check('OIDC: grants parsed from scope claim', good.ok && good.principal.grants['demo'] === 'write' && good.principal.grants['ashlands'] === 'read');
+check('OIDC: grants parsed from scope claim', good.ok && good.principal.grants['demo'] === 'write' && good.principal.grants['acme'] === 'read');
 
 // wrong issuer
 let badIssuer = await provider.verify(

@@ -5,7 +5,7 @@ Creates/updates, not deletes:
   - realm agentdox
   - client scope 'agentdox' + 'agentdox-scopes' user-attribute claim mapper
   - clients agentdox-web (public) and agentdox-server (confidential, direct-grant + service account)
-  - service-account scopes and demo user drew with agentdox:scopes + password
+  - service-account scopes and demo user alice with agentdox:scopes + password
 
 Env: BASE_URL, KEYCLOAK_ADMIN, KEYCLOAK_ADMIN_PASSWORD, AGENTDOX_REALM,
      AGENTDOX_SERVER_CLIENT_SECRET, AGENTDOX_DEMO_PASSWORD
@@ -22,7 +22,7 @@ REALM = os.environ.get("AGENTDOX_REALM", "agentdox")
 ADMIN = os.environ.get("KEYCLOAK_ADMIN", "admin")
 ADMIN_PASS = os.environ["KEYCLOAK_ADMIN_PASSWORD"]
 SRV_SECRET = os.environ.get("AGENTDOX_SERVER_CLIENT_SECRET", "agentdox-server-dev-secret")
-DEMO_USER = os.environ.get("AGENTDOX_DEMO_USER", "drew")
+DEMO_USER = os.environ.get("AGENTDOX_DEMO_USER", "alice")
 DEMO_PASS = os.environ.get("AGENTDOX_DEMO_PASSWORD", "demo123")
 
 
@@ -163,7 +163,7 @@ if not (isinstance(sa, dict) and sa.get("id")):
 else:
     sa_body = dict(sa)
     sa_attrs = dict(sa.get("attributes") or {})
-    sa_attrs["agentdox.scopes"] = ["demo:write ashlands:read"]
+    sa_attrs["agentdox.scopes"] = ["demo:write acme:read"]
     sa_body["attributes"] = sa_attrs
     req("PUT", A + f"/users/{sa['id']}", sa_body, token=TOK)
     print("[setup] service-account scopes set")
@@ -178,7 +178,7 @@ if user is None:
 uid = user["id"]
 u = req("GET", A + f"/users/{uid}", token=TOK)[1]
 u["attributes"] = dict(u.get("attributes") or {})
-u["attributes"]["agentdox.scopes"] = ["demo:write ashlands:read"]
+u["attributes"]["agentdox.scopes"] = ["demo:write acme:read"]
 req("PUT", A + f"/users/{uid}", u, token=TOK)
 req("PUT", A + f"/users/{uid}/reset-password",
     {"type": "password", "value": DEMO_PASS, "temporary": False}, token=TOK)

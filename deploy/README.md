@@ -33,7 +33,7 @@ curl -s http://localhost:3003/health
 
 > After the stack is healthy, **bootstrap the realm** (creates client `agentdox-web`,
 > client `agentdox-server` with secret `agentdox-server-dev-secret`, and demo user
-> `drew / demo123` carrying `agentdox:scopes = "demo:write ashlands:read"`):
+> `alice / demo123` carrying `agentdox:scopes = "demo:write acme:read"`):
 >
 > ```bash
 > KEYCLOAK_ADMIN=admin KEYCLOAK_ADMIN_PASSWORD=admin \
@@ -53,9 +53,9 @@ inside the container so the script can reach agentdox on `127.0.0.1:3003`:
 ```bash
 docker cp deploy/oidc-smoke.mjs agentdox-server:/tmp/oidc-smoke.mjs
 docker exec agentdox-server node /tmp/oidc-smoke.mjs
-# user token iss = http://localhost:8090/realms/agentdox, agentdox:scopes = "demo:write ashlands:read"
+# user token iss = http://localhost:8090/realms/agentdox, agentdox:scopes = "demo:write acme:read"
 # GET /memory?category=demo   -> 200 (write grant)
-# POST /memory category=ashlands -> 403 (read-only)
+# POST /memory category=acme -> 403 (read-only)
 # POST /context/assemble scope=demo -> 200
 # GET /memory (no token)      -> 401
 ```

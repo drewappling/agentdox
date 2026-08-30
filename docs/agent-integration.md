@@ -26,15 +26,15 @@ agents — only the glue file differs.
 curl -X POST http://localhost:3003/projects \
   -H "Authorization: Bearer $AGENTDOX_TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"slug":"ashlands","name":"Ashlands"}'
+  -d '{"slug":"acme","name":"Acme"}'
 # -> { "project": {...}, "token": "<scoped-pat-shown-once>", "expiresAt": ... }
 
 # SDK
 const client = new AgentDoxClient('http://localhost:3003', undefined, token);
-const { project, token: projectPat } = await client.projects.ensure({ slug: 'ashlands', name: 'Ashlands' });
+const { project, token: projectPat } = await client.projects.ensure({ slug: 'acme', name: 'Acme' });
 
 # MCP
-#  project_ensure { "slug": "ashlands", "name": "Ashlands" }
+#  project_ensure { "slug": "acme", "name": "Acme" }
 ```
 
 ## Retrieval, in one paragraph
@@ -85,7 +85,7 @@ curl -X POST http://localhost:3003/auth/tokens   -H "Authorization: Bearer $AGEN
 
 ```ini
 AGENTDOX_URL=http://localhost:3003
-AGENTDOX_SCOPE=ashlands          # the one value derived from this project folder
+AGENTDOX_SCOPE=acme              # the one value derived from this project folder
 AGENTDOX_TOKEN=<the global pat>
 ```
 
@@ -112,8 +112,8 @@ host SQLite file. It is *not* shared with a Docker-hosted web UI:
   "mcpServers": {
     "agentdox": {
       "command": "node",
-      "args": ["E:/projects/agentdox/packages/mcp/dist/cli.js"],
-      "env": { "AGENTDOX_DB": "E:/projects/agentdox/data/agentdox.db" }
+      "args": ["/path/to/agentdox/packages/mcp/dist/cli.js"],
+      "env": { "AGENTDOX_DB": "/path/to/agentdox/data/agentdox.db" }
     }
   }
 }
@@ -128,10 +128,10 @@ host SQLite file. It is *not* shared with a Docker-hosted web UI:
 
 ```markdown
 ## agentdox (shared context/memory — MANDATORY to keep updated)
-- agentdox is this repo's memory + docs system; your project slug is `ashlands` (scope writes to it).
+- agentdox is this repo's memory + docs system; your project slug is `acme` (scope writes to it).
 - Keeping agentdox current is part of completing any task, not optional. Before finishing a task,
   make sure the memory and docs you touched are up to date and nothing is stale.
-- On startup, run `project_ensure` (slug `ashlands`) before doing memory/docs work.
+- On startup, run `project_ensure` (slug `acme`) before doing memory/docs work.
 - **Onboard on connect:** read `context_brief` (scope = project slug) when first starting — it holds the
   project's historic on-ramp (overview, repo layout & tooling, code style, build/test, asset
   conventions, gotchas, decision log). Don't rediscover what's already recorded.
@@ -154,11 +154,11 @@ import { AgentDoxClient } from '@agentdox/sdk';
 
 const client = new AgentDoxClient('http://localhost:3003', undefined, process.env.AGENTDOX_TOKEN);
 
-await client.projects.ensure({ slug: 'ashlands', name: 'Ashlands' });
-await client.memory.create({ content: 'player digs in 3/4 top-down, hard edges', category: 'ashlands', importance: 0.9 });
-const docs = await client.docs.list({ scope: 'ashlands' });
-const ctx = await client.context.assemble({ scope: 'ashlands', query: 'movement rules' });
-const s = await client.sessions.create({ scope: 'ashlands', title: 'movement fix' });
+await client.projects.ensure({ slug: 'acme', name: 'Acme' });
+await client.memory.create({ content: 'orders submit in 3-step flow, strict validation', category: 'acme', importance: 0.9 });
+const docs = await client.docs.list({ scope: 'acme' });
+const ctx = await client.context.assemble({ scope: 'acme', query: 'validation rules' });
+const s = await client.sessions.create({ scope: 'acme', title: 'validation fix' });
 await client.sessions.append(s.id, { role: 'assistant', content: '…' });
 ```
 

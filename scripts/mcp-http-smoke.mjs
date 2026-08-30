@@ -7,11 +7,11 @@ const MCP = 'http://localhost:3003/mcp';
 const KC = 'http://localhost:8090/realms/agentdox';
 const pass = (n, ok) => console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}`);
 
-// get drew's OIDC token (grants: demo:write ashlands:read)
+// get alice's OIDC token (grants: demo:write acme:read)
 const tr = await fetch(`${KC}/protocol/openid-connect/token`, {
   method: 'POST',
   headers: { 'content-type': 'application/x-www-form-urlencoded' },
-  body: 'grant_type=password&client_id=agentdox-server&client_secret=agentdox-server-dev-secret&username=drew&password=demo123',
+  body: 'grant_type=password&client_id=agentdox-server&client_secret=agentdox-server-dev-secret&username=alice&password=demo123',
 });
 const tj = await tr.json();
 pass('got OIDC token', !!tj.access_token);
@@ -32,15 +32,15 @@ pass('has memory_add + context_assemble + project_ensure',
 const add = await client.callTool({ name: 'memory_add', arguments: { content: `http-mcp ${Date.now()}`, category: 'demo' } });
 pass('memory_add demo (write)', !add.isError && /\bStored memory\b/.test(add.content[0]?.text ?? ''));
 
-// memory_add in ashlands (read-only) -> denied
-const denyAdd = await client.callTool({ name: 'memory_add', arguments: { content: 'no', category: 'ashlands' } });
-pass('memory_add ashlands denied (read-only)', denyAdd.isError && /forbidden/.test(denyAdd.content[0]?.text ?? ''));
+// memory_add in acme (read-only) -> denied
+const denyAdd = await client.callTool({ name: 'memory_add', arguments: { content: 'no', category: 'acme' } });
+pass('memory_add acme denied (read-only)', denyAdd.isError && /forbidden/.test(denyAdd.content[0]?.text ?? ''));
 
 // context_assemble demo -> ok
 const ctx = await client.callTool({ name: 'context_assemble', arguments: { scope: 'demo' } });
 pass('context_assemble demo', !ctx.isError && ctx.content.length > 0);
 
-// context_assemble ashlands -> ok (read) but not missing-scope ->  should also deny an unknown scope
+// context_assemble acme -> ok (read) but not missing-scope ->  should also deny an unknown scope
 const miss = await client.callTool({ name: 'context_assemble', arguments: { scope: 'missing-scope' } });
 pass('context_assemble unknown scope denied', miss.isError && /forbidden/.test(miss.content[0]?.text ?? ''));
 

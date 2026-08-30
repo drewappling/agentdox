@@ -75,8 +75,8 @@
 {/if}
 
 <form class="new" onsubmit={(e) => { e.preventDefault(); create(); }}>
-  <label>name <input bind:value={name} placeholder="Ashlands" /></label>
-  <label>slug <input bind:value={slug} placeholder="ashlands" /></label>
+  <label>name <input bind:value={name} placeholder="Acme" /></label>
+  <label>slug <input bind:value={slug} placeholder="acme" /></label>
   <label>description <input bind:value={description} placeholder="optional" /></label>
   <button disabled={!name.trim() || !slug.trim()}>create / ensure</button>
 </form>

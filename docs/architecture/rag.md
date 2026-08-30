@@ -4,7 +4,7 @@
 index, MCP/SDK surfaces, and a regression fixture; §4 records the plan, §8 what was built and
 what the plan got wrong.
 **Scope:** Retrieval quality across memory, docs, and context assembly.
-**Measured:** 2026-08-29, against the live store (213 items across `ashlands`, `omp-router`, `agentdox`).
+**Measured:** 2026-08-29, against the live store (213 items across `acme`, `web-app`, `agentdox`).
 
 ---
 
@@ -22,7 +22,7 @@ score = Σ count(token) / sqrt(|queryTokens|)
 That is raw term frequency. It has no IDF, no document-length normalisation, no stemming, and its
 only stopword rule is `t.length > 1` — so `in`, `is`, `me`, `do`, `we` are all scored terms.
 
-The consequences are not theoretical. They were measured on the `ashlands` scope (94 memory
+The consequences are not theoretical. They were measured on the `acme` scope (94 memory
 entries, 100 docs).
 
 ## 2. Measured failures
@@ -35,13 +35,13 @@ consistently the 3,000+ char ones.
 
 ### 2.2 Wrong answers when the right one exists
 
-Query: **"what pose is the base character in"**
+Query: **"which module is in the base request path"**
 
 | Rank | Today (`relevanceScore`) | With BM25 |
 | --- | --- | --- |
-| 1 | WORLDGEN RUINS — siting BUILT… (3,481 ch) | **How the 8-direction A-pose BASE is made** |
-| 2 | TREE ECOLOGY + SALT-LAKE ART… (3,130 ch) | Hybrid VLM QA gate for walk clips |
-| 3 | HYDROLOGY ROUTING FIX… (3,306 ch) | f-lite base-figure prompting traps |
+| 1 | DATA IMPORT — ingest BATCH… (3,481 ch) | **How the base request path is resolved** |
+| 2 | REGION CACHE + BATCH JOB… (3,130 ch) | Hybrid retry gate for batch jobs |
+| 3 | REQUEST ROUTING FIX… (3,306 ch) | config-lite request-schema traps |
 
 The correct entry exists and is never returned. The three that are returned are simply the three
 longest entries in the scope — they matched on `is`, `in`, `the`, `base`.
@@ -49,19 +49,19 @@ longest entries in the scope — they matched on `is`, `in`, `the`, `base`.
 ### 2.3 Whole-doc retrieval, then blind truncation
 
 Docs are scored and returned whole, then `MAX_DOC_CHARS = 2000` trims them during assembly. For
-`ashlands/docs/settlement-redesign.md` (43,959 chars) that injects **the first 4.5% of the
+`acme/docs/api-redesign.md` (43,959 chars) that injects **the first 4.5% of the
 document** — its preamble — regardless of which passage was relevant.
 
-Query: **"how are settlement roads generated"**
+Query: **"how are routes generated"**
 
-- Today: `settlement-redesign.md`, truncated to its opening.
-- Chunked + BM25: `ashlands/docs/systems/roads.md#13` → *"## What is NOT done — Roads are not in
+- Today: `api-redesign.md`, truncated to its opening.
+- Chunked + BM25: `acme/docs/systems/routing.md#13` → *"## What is NOT done — Routes are not in
   the runtime pipeline…"*, ~1.2k chars, the passage that actually answers it.
 
 ### 2.4 The class BM25 does *not* fix
 
 Query: **"stop the agent re-asking me questions"** fails under both the current scorer *and* BM25.
-It returns garment-pipeline and SaaS-platform entries. The material that answers it — the project
+It returns data-pipeline and platform-svc entries. The material that answers it — the project
 brief and context-assembly entries — shares no vocabulary with the question. This is
 vocabulary mismatch, and it is the only failure class in the sample that genuinely requires
 embeddings.
@@ -91,7 +91,7 @@ Replace `relevanceScore` with FTS5 + `bm25()`.
 - Keep the `importance` nudge on memory, and keep the min-importance top-up in assembly: those are
   agentdox-specific ranking signals BM25 knows nothing about.
 - Query construction matters. Naive `OR` over every term reproduces the length bias (an artefact
-  visible in the prototype: an unrelated biomes chunk outscored the right one on a term-OR query).
+  visible in the prototype: an unrelated regions chunk outscored the right one on a term-OR query).
   Use phrase and AND-biased queries with a proper stopword list, falling back to OR only on empty
   results.
 
@@ -114,7 +114,7 @@ vector is close to meaningless).
 ### Stage 3 — Optional embeddings
 
 - `EmbeddingProvider` interface: `embed(texts: string[]): Promise<Float32Array[]>`, with `ollama`
-  (local, free, private — the machine already runs it), `openai`, and `none` implementations,
+  (local, free, private — a local model server), `openai`, and `none` implementations,
   selected by env (`AGENTDOX_EMBED_PROVIDER`, `AGENTDOX_EMBED_MODEL`).
 - Store vectors as `BLOB` next to each chunk and memory row, with the model id and dimension.
   A model change invalidates the column — record it rather than silently mixing vector spaces.
@@ -135,7 +135,7 @@ because BM25 scores and cosine similarities are not on comparable scales and the
 would need re-tuning per corpus.
 
 Reranking (cross-encoder or LLM-as-judge) is explicitly **out of scope** until there is evidence
-that fusion is insufficient — it adds a model call to the hot path that the router bridge pays for
+that fusion is insufficient — it adds a model call to the hot path that the web-app pays for
 on every context refresh.
 
 ## 5. What not to build
@@ -146,7 +146,7 @@ on every context refresh.
 - **`sqlite-vec`.** Same reasoning, plus a per-platform native binary in a package that currently
   has none.
 - **Re-chunking memory.** Entries are already one-fact-each by protocol.
-- **Embedding-only retrieval.** §2.2's win came from BM25; exact identifiers (`SettlementLayout`,
+- **Embedding-only retrieval.** §2.2's win came from BM25; exact identifiers (`OrderService`,
   `AGENTDOX_TOKEN`, `bm25()`) are precisely what lexical search is good at and dense retrieval is
   bad at. Hybrid or nothing.
 
@@ -184,7 +184,7 @@ on every context refresh.
 so anything discussed further back than `sessionLimit` was unreachable however directly it
 answered the query. Messages are now indexed (`message_fts` + vectors) and the budget is split:
 two thirds is the recent tail, for continuity, and the remainder is relevance-ranked older
-messages, merged chronologically. Measured on `ashlands` with `sessionLimit: 9`, the block
+messages, merged chronologically. Measured on `acme` with `sessionLimit: 9`, the block
 reaches message ids 75-137 where recency alone would have given 130-137.
 
 **The index heals itself.** `AgentDox` checks on open and rebuilds the lexical index when it
@@ -230,7 +230,7 @@ applied per model family in `embeddings.ts`; symmetric models (OpenAI) get none.
 
 The bottom row of that table is also the clearest evidence for hybrid over either arm alone:
 vectors are perfect on natural-language questions and worst on exact identifiers
-(`SettlementLayout.Build`, `SimTestsNet10.csproj`); lexical is the reverse. Fusing them keeps each
+(`OrderService.submit`, `Api.Tests.csproj`); lexical is the reverse. Fusing them keeps each
 arm's strength on the inputs the other fumbles.
 
 **Still unsolved:** `"stop the agent re-asking me questions"` improved from absent to rank 7, but

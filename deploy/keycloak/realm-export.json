@@ -66,13 +66,13 @@
   ],
   "users": [
     {
-      "username": "drew",
+      "username": "alice",
       "enabled": true,
-      "email": "drew@example.com",
-      "firstName": "Drew",
+      "email": "alice@example.com",
+      "firstName": "Alice",
       "emailVerified": true,
       "attributes": {
-        "agentdox.scopes": ["demo:write ashlands:read"]
+        "agentdox.scopes": ["demo:write acme:read"]
       },
       "credentials": [{ "type": "password", "value": "demo123", "temporary": false }]
     }

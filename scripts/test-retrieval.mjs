@@ -37,7 +37,7 @@ Depot staffing is reviewed in the same meeting, and the meeting notes are filed 
 operations record. `.repeat(6);
 
 const MEMORY = [
-  ['The rendering pipeline uses an A-pose base figure, not a T-pose, because garment fitting needs the arms clear of the torso.', 0.8],
+  ['The scheduler uses a fixed base interval, not exponential backoff, because retries must stay evenly spaced.', 0.8],
   ['CarriageBuilder.Assemble is the only runtime caller of WheelLayout.Solve; everything else goes through the editor probe.', 0.9],
   ['Nightly export batches run headless via the batch runner; editing files under the asset root mid-run triggers a reload that wipes the job queue.', 0.7],
   ['Never ask the operator to re-confirm a decision that is already written down — read the decision log first.', 0.9],
@@ -96,8 +96,8 @@ check('index builds on write', stats.memory.total === MEMORY.length && stats.chu
 }
 {
   // The regression that motivated the fixture: every result here used to be a long decoy.
-  const hits = await topMemory('what pose is the base figure in');
-  check('no length bias: short exact answer outranks long decoys', /A-pose base figure/.test(hits[0] ?? ''), `got: ${(hits[0] ?? '').slice(0, 90)}`);
+  const hits = await topMemory('what interval does the scheduler use');
+  check('no length bias: short exact answer outranks long decoys', /fixed base interval/.test(hits[0] ?? ''), `got: ${(hits[0] ?? '').slice(0, 90)}`);
 }
 {
   const hits = await topMemory('colour grading stage');

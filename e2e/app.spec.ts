@@ -9,7 +9,7 @@ test('user journey: login, memory, docs, sessions, context, projects', async ({ 
 
   // Keycloak login (separate origin)
   await page.waitForURL(/localhost:8090/);
-  await page.fill('#username', 'drew');
+  await page.fill('#username', 'alice');
   await page.fill('#password', 'demo123');
   await page.press('#password', 'Enter');
 
@@ -72,10 +72,10 @@ test('user journey: login, memory, docs, sessions, context, projects', async ({ 
   await page.waitForURL(/#\/projects/);
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
   const pslug = `e2e-${Date.now()}`;
-  await page.fill('[placeholder="Ashlands"]', 'E2E Project');
-  await page.fill('[placeholder="ashlands"]', pslug);
+  await page.fill('[placeholder="Acme"]', 'E2E Project');
+  await page.fill('[placeholder="acme"]', pslug);
   await page.getByRole('button', { name: /create/ }).click();
-  // drew lacks a grant on the new scope -> the server mints a project PAT shown once
+  // alice lacks a grant on the new scope -> the server mints a project PAT shown once
   await expect(page.locator('.token > code')).toBeVisible();
   // and it appears in the project list
   await expect(page.locator('.projs li', { hasText: pslug })).toBeVisible();

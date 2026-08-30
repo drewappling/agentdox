@@ -7,11 +7,11 @@ const DOX = 'http://127.0.0.1:3003';
 
 const pass = (n, ok) => console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}`);
 
-// 1) Get a real user OIDC token (drew: demo=write, ashlands=read)
+// 1) Get a real user OIDC token (alice: demo=write, acme=read)
 const tr = await fetch(`${KC}/protocol/openid-connect/token`, {
   method: 'POST',
   headers: { 'content-type': 'application/x-www-form-urlencoded' },
-  body: 'grant_type=password&client_id=agentdox-server&client_secret=agentdox-server-dev-secret&username=drew&password=demo123',
+  body: 'grant_type=password&client_id=agentdox-server&client_secret=agentdox-server-dev-secret&username=alice&password=demo123',
 });
 const tj = await tr.json();
 pass('got OIDC token', !!tj.access_token);
@@ -20,7 +20,7 @@ const at = tj.access_token;
 const client = new AgentDoxClient(DOX, fetch, at);
 const publicClient = new AgentDoxClient(DOX);
 
-// 2) Write into demo scope (drew has write) — via SDK
+// 2) Write into demo scope (alice has write) — via SDK
 try {
   const m = await client.memory.create({ content: 'created via @agentdox/sdk', category: 'demo', importance: 0.9 });
   pass('SDK create memory in demo (write)', !!m.id);
@@ -43,12 +43,12 @@ try {
   console.log('      ', e.message.slice(0, 100));
 }
 
-// 4) Write into ashlands scope — drew is READ-only there -> expect 403
+// 4) Write into acme scope — alice is READ-only there -> expect 403
 try {
-  await client.memory.create({ content: 'should fail', category: 'ashlands' });
-  pass('SDK write to ashlands denied (read-only)', false);
+  await client.memory.create({ content: 'should fail', category: 'acme' });
+  pass('SDK write to acme denied (read-only)', false);
 } catch (e) {
-  pass(`SDK write to ashlands denied (read-only)  [${e.message.match(/\d{3}/)?.[0] || 'err'}]`, /403/.test(e.message));
+  pass(`SDK write to acme denied (read-only)  [${e.message.match(/\d{3}/)?.[0] || 'err'}]`, /403/.test(e.message));
 }
 
 // 5) No token -> expect 401

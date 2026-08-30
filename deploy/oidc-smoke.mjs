@@ -7,7 +7,7 @@ const DOX = 'http://127.0.0.1:3003';
   const tr = await fetch(`${KC}/protocol/openid-connect/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: 'grant_type=password&client_id=agentdox-server&client_secret=agentdox-server-dev-secret&username=drew&password=demo123',
+    body: 'grant_type=password&client_id=agentdox-server&client_secret=agentdox-server-dev-secret&username=alice&password=demo123',
   });
   const tj = await tr.json();
   if (!tj.access_token) throw new Error('password grant failed: ' + JSON.stringify(tj));
@@ -22,9 +22,9 @@ const DOX = 'http://127.0.0.1:3003';
   const writeAsh = await fetch(`${DOX}/memory`, {
     method: 'POST',
     headers: { authorization: `Bearer ${at}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ content: 'e2e oidc', category: 'ashlands' }),
+    body: JSON.stringify({ content: 'e2e oidc', category: 'acme' }),
   });
-  console.log('POST /memory category=ashlands (read-only)    ->', writeAsh.status, '(expect 403)');
+  console.log('POST /memory category=acme (read-only)    ->', writeAsh.status, '(expect 403)');
 
   const ctx = await fetch(`${DOX}/context/assemble`, {
     method: 'POST',

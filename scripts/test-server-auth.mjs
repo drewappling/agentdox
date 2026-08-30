@@ -69,8 +69,8 @@ check('demo reader can read scope=demo -> 200', r.status === 200);
 r = await post('/memory', demo, { content: 'x', category: 'demo' });
 check('demo reader denied write to demo -> 403', r.status === 403);
 
-// demo reader cannot reach a scope it lacks (ashlands)
-r = await post('/context/assemble', demo, { scope: 'ashlands' });
+// demo reader cannot reach a scope it lacks (acme)
+r = await post('/context/assemble', demo, { scope: 'acme' });
 check('demo reader denied unrelated scope -> 403', r.status === 403);
 
 // admin can write anywhere
@@ -87,6 +87,35 @@ r = await post('/auth/tokens', ADMIN, { grants: { '*': 'admin' } });
 const second = await r.body;
 r = await del(`/auth/tokens/${second.id}`, ADMIN);
 check('admin revokes PAT', r.status === 200);
+
+// ---- Regression: unscoped list/search must not leak across scopes (CWE-862 / CWE-306) ----
+// Seed matching content in two scopes; the demo-reader may only read `demo`.
+await post('/docs', ADMIN, { slug: 'acme-doc', title: 'Acme doc', content: 'acme secret content', scope: 'acme' });
+await post('/docs', ADMIN, { slug: 'demo-doc', title: 'Demo doc', content: 'demo secret content', scope: 'demo' });
+await post('/sessions', ADMIN, { scope: 'acme', title: 'acme session' });
+await post('/sessions', ADMIN, { scope: 'demo', title: 'demo session' });
+await post('/memory', ADMIN, { content: 'acme secret memory', category: 'acme', importance: 0.9 });
+await post('/memory', ADMIN, { content: 'demo secret memory', category: 'demo', importance: 0.9 });
+
+// Unauthenticated callers get nothing from the unscoped routes (these used to return every scope).
+for (const path of ['/docs', '/sessions', '/docs/search?q=secret', '/memory/search?q=secret', '/docs/passages?q=secret']) {
+  const u = await get(path);
+  check(`unauthenticated ${path} -> 401`, u.status === 401);
+}
+
+// A scope-limited reader without a scope filter sees only its readable scopes — never `acme`.
+r = await get('/docs', demo);
+check('unscoped /docs filtered to reader scope',
+  Array.isArray(r.body) && r.body.some((d) => d.scope === 'demo') && !r.body.some((d) => d.scope === 'acme'));
+r = await get('/sessions', demo);
+check('unscoped /sessions filtered to reader scope',
+  Array.isArray(r.body) && r.body.some((s) => s.scope === 'demo') && !r.body.some((s) => s.scope === 'acme'));
+r = await get('/docs/search?q=secret', demo);
+check('unscoped /docs/search filtered to reader scope',
+  Array.isArray(r.body) && r.body.some((d) => d.scope === 'demo') && !r.body.some((d) => d.scope === 'acme'));
+r = await get('/memory/search?q=secret', demo);
+check('unscoped /memory/search filtered to reader scope',
+  Array.isArray(r.body) && r.body.some((h) => h.entry.category === 'demo') && !r.body.some((h) => h.entry.category === 'acme'));
 
 console.log(`\n${PASS.filter(Boolean).length}/${PASS.length} checks passed`);
 process.exit(PASS.every(Boolean) ? 0 : 1);

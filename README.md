@@ -80,7 +80,7 @@ AGENTDOX_EMBED_URL=http://localhost:11434
 ```
 
 Both arms earn their place: over a ten-query benchmark, vectors scored MRR 1.000 on
-natural-language questions but 0.529 on exact identifiers (`SettlementLayout.Build`); BM25
+natural-language questions but 0.529 on exact identifiers (`OrderService.submit`); BM25
 scored 0.800 and 0.600. Fused, 0.825 and 0.800.
 
 Indexing needs no attention in normal use — writes index themselves, the index rebuilds itself

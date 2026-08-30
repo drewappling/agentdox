@@ -24,7 +24,7 @@ if not m: print("FAIL: no login form (maybe already redirected?)"); raise System
 action = m.group(1).replace("&amp;", "&")
 # hidden inputs (execution / session_code)
 hiddens = {h: v for h, v in re.findall(r'name="([^"]+)"\s+value="([^"]*)"', html)}
-hiddens["username"] = "drew"
+hiddens["username"] = "alice"
 hiddens["password"] = "demo123"
 data = urllib.parse.urlencode(hiddens).encode()
 req = urllib.request.Request(action, data=data)

@@ -49,7 +49,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       title: 'Ensure project',
       description: 'Create or get an agent workspace (project). The slug becomes the scope namespace for memory/docs/sessions. Call this on connect so subsequent memory/docs are scoped to your project.',
       inputSchema: {
-        slug: z.string().describe('Stable identifier, also the scope (e.g. ashlands)'),
+        slug: z.string().describe('Stable identifier, also the scope (e.g. acme)'),
         name: z
           .string()
           .optional()
@@ -89,7 +89,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       description: 'Store a durable fact scoped to a project (category == scope). Keep content compact and high-signal.',
       inputSchema: {
         content: z.string().describe('The fact to remember'),
-        category: z.string().optional().describe('Scope/project (e.g. ashlands)'),
+        category: z.string().optional().describe('Scope/project (e.g. acme)'),
         target: z.string().optional(),
         importance: z.number().min(0).max(1).optional(),
         tags: z.array(z.string()).optional(),
@@ -238,7 +238,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
         'Search documentation and get back the matching PASSAGES rather than whole documents. Prefer this over docs_search when you want the part of a doc that answers a question: a long doc returned whole is truncated, and the truncation is rarely the relevant part. Each hit carries the doc slug and heading breadcrumb, so you can docs_read the full document when a passage is not enough.',
       inputSchema: {
         query: z.string(),
-        scope: z.string().optional().describe('Project scope (e.g. ashlands)'),
+        scope: z.string().optional().describe('Project scope (e.g. acme)'),
         limit: z.number().int().min(1).max(50).optional(),
       },
     },

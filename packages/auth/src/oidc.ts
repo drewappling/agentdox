@@ -18,7 +18,7 @@ export interface OidcAuthProviderOptions {
    * must fetch keys from an internal URL while validating the public issuer in the JWT. */
   jwksUri?: string;
   /**
-   * Claim that carries space-delimited `scope:role` grants, e.g. `ashlands:write demo:read`.
+   * Claim that carries space-delimited `scope:role` grants, e.g. `acme:write demo:read`.
    * Defaults to `agentdox:scopes`.
    */
   scopeClaim?: string;
@@ -71,6 +71,10 @@ export class OidcAuthProvider implements AuthProvider {
     try {
       const { payload } = await jwtVerify(token, this.jwks, {
         issuer: this.issuer,
+        // Pin asymmetric algorithms (defense-in-depth against alg-confusion) and tolerate minor
+        // clock skew between issuer and this server.
+        algorithms: ['RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512', 'ES256', 'ES384', 'ES512', 'EdDSA'],
+        clockTolerance: '30s',
         ...(this.audience ? { audience: this.audience } : {}),
       });
       const grants = this.extractGrants

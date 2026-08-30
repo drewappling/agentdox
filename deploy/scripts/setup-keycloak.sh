@@ -14,7 +14,7 @@ REALM="${AGENTDOX_REALM:-agentdox}"
 ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
 ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD}"
 SERVER_CLIENT_SECRET="${AGENTDOX_SERVER_CLIENT_SECRET:-agentdox-server-dev-secret}"
-DEMO_USER="${AGENTDOX_DEMO_USER:-drew}"
+DEMO_USER="${AGENTDOX_DEMO_USER:-alice}"
 DEMO_PASS="${AGENTDOX_DEMO_PASSWORD:-demo123}"
 
 j() { python -c "import sys,json;d=json.load(sys.stdin);print(eval('d'+sys.argv[1]))" "$1"; }
@@ -94,7 +94,7 @@ fi
 
 echo "[setup] setting '$DEMO_USER' scopes + password..."
 curl -s -o /dev/null -X PUT -H "$AUTH" -H 'content-type: application/json' \
-  -d '{"agentdox.scopes":["demo:write ashlands:read"]}' "$ADMIN/$REALM/users/$USER_ID"
+  -d '{"agentdox.scopes":["demo:write acme:read"]}' "$ADMIN/$REALM/users/$USER_ID"
 curl -s -o /dev/null -X PUT -H "$AUTH" -H 'content-type: application/json' \
   -d "{\"type\":\"password\",\"value\":\"$DEMO_PASS\",\"temporary\":false}" \
   "$ADMIN/$REALM/users/$USER_ID/reset-password"

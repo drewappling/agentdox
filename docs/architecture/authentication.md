@@ -110,12 +110,12 @@ No per-request IdP round-trip; no distributed session store required for API tra
 ## 6. Authorization: Claims → Scopes (RBAC)
 
 agentdox's natural authorization unit is its existing **`scope`** — a project/agent namespace
-(e.g. `ashlands`, `demo`). Authorization answers: *may this caller read/write this scope?*
+(e.g. `acme`, `demo`). Authorization answers: *may this caller read/write this scope?*
 
 **Model — resolves to an `authorizedScopes` set per request:**
 
 - **Source A: OIDC claims.** Access tokens carry scopes/groups. Default mapping:
-  - scope claim `agentdox:scopes` (custom, space-delimited) → e.g. `ashlands read`, `~ write`.
+  - scope claim `agentdox:scopes` (custom, space-delimited) → e.g. `acme read`, `~ write`.
   - provider groups/roles mapped through config (`agentdox.groupMapping`).
 - **Source B: local overrides.** An `acls` table mapping `subject` (or group) → scope+role, for
   setups that don't want to manage roles in the IdP.

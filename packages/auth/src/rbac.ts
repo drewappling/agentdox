@@ -4,7 +4,7 @@ import { roleAtLeast } from '@agentdox/types';
 const VALID_ROLES: Role[] = ['none', 'read', 'write', 'admin'];
 
 /**
- * Parse grant claims (space-delimited `scope:role` pairs, e.g. `ashlands:write demo:read`)
+ * Parse grant claims (space-delimited `scope:role` pairs, e.g. `acme:write demo:read`)
  * into a `Record<scope, role>`. Also accepts an already-object claim.
  */
 export function parseScopeGrants(value: unknown): Record<string, Role> {
@@ -21,8 +21,10 @@ export function parseScopeGrants(value: unknown): Record<string, Role> {
     if (!token) continue;
     const [scope, maybeRole] = token.split(':');
     if (!scope) continue;
-    const role = maybeRole && (VALID_ROLES as string[]).includes(maybeRole) ? (maybeRole as Role) : 'write';
-    out[scope] = role;
+    // Bare `scope` (no role) grants read; a present-but-invalid role is dropped, never silently
+    // escalated. Defaulting a malformed claim to write would be a privilege escalation.
+    if (maybeRole && !(VALID_ROLES as string[]).includes(maybeRole)) continue;
+    out[scope] = ((maybeRole as Role) || 'read');
   }
   return out;
 }

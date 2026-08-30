@@ -27,7 +27,7 @@ services:
       AGENTDOX_ADMIN_TOKEN: "${AGENTDOX_ADMIN_TOKEN:?set AGENTDOX_ADMIN_TOKEN in deploy/.env}"
       # Single issuer = browser-visible URL. Keys are fetched via host.docker.internal
       # (browser and container resolve the same issuer; different reachability).
-      # KEYCLOAK_PORT is the host-published port (default 8090; was 8080 until that collided with the Unity MCP server).
+      # KEYCLOAK_PORT is the host-published port (default 8090; override if it collides with another local service).
       AGENTDOX_OIDC_ISSUER: "http://localhost:${KEYCLOAK_PORT:-8090}/realms/agentdox"
       AGENTDOX_OIDC_JWKS_URI: "http://host.docker.internal:${KEYCLOAK_PORT:-8090}/realms/agentdox/protocol/openid-connect/certs"
       AGENTDOX_OIDC_CLIENT_ID: "${AGENTDOX_OIDC_CLIENT_ID:-agentdox-server}"

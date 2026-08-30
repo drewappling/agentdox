@@ -8,6 +8,8 @@ import { fuseRRF, lexicalSearch, vectorSearch } from './retrieval.js';
 export interface ChunkHit {
   id: string;
   docId: string;
+  /** Owning scope of the parent document (undefined when the doc has no scope). */
+  scope?: string;
   slug: string;
   title: string;
   /** Heading breadcrumb within the doc, e.g. "Roads > What is NOT done". */
@@ -20,6 +22,7 @@ export interface ChunkHit {
 type ChunkRow = {
   id: string;
   doc_id: string;
+  scope: string | null;
   slug: string;
   title: string;
   heading: string;
@@ -203,7 +206,7 @@ export class DocService {
     if (!fused.length) return [];
 
     const byId = this.store.db.prepare(
-      'SELECT id, doc_id, slug, title, heading, ordinal, content FROM doc_chunks WHERE id = ?',
+      'SELECT id, doc_id, scope, slug, title, heading, ordinal, content FROM doc_chunks WHERE id = ?',
     );
     const hits: ChunkHit[] = [];
     for (const row of fused.slice(0, limit)) {
@@ -212,6 +215,7 @@ export class DocService {
       hits.push({
         id: c.id,
         docId: c.doc_id,
+        scope: c.scope ?? undefined,
         slug: c.slug,
         title: c.title,
         heading: c.heading,
@@ -257,10 +261,10 @@ export class DocService {
   /** Every chunk of one document, in reading order. */
   chunksFor(docId: string): ChunkHit[] {
     const rows = this.store.db
-      .prepare('SELECT id, doc_id, slug, title, heading, ordinal, content FROM doc_chunks WHERE doc_id = ? ORDER BY ordinal')
+      .prepare('SELECT id, doc_id, scope, slug, title, heading, ordinal, content FROM doc_chunks WHERE doc_id = ? ORDER BY ordinal')
       .all(docId) as ChunkRow[];
     return rows.map((c) => ({
-      id: c.id, docId: c.doc_id, slug: c.slug, title: c.title,
+      id: c.id, docId: c.doc_id, scope: c.scope ?? undefined, slug: c.slug, title: c.title,
       heading: c.heading, ordinal: c.ordinal, content: c.content, score: 0,
     }));
   }

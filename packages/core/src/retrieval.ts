@@ -6,7 +6,7 @@
  *   r(length, score) = 0.423 — the longest entry in a scope won almost any query.
  * - Neither arm is sufficient alone, and they fail on opposite inputs. Over ten queries on a
  *   live scope: vectors scored MRR 1.000 on natural-language questions but 0.529 on exact
- *   identifiers (`SettlementLayout.Build`, `SimTestsNet10.csproj`); BM25 scored 0.800 and
+ *   identifiers (`OrderService.submit`, `Api.Tests.csproj`); BM25 scored 0.800 and
  *   0.600. Fused, 0.825 and 0.800 — better than either arm on the inputs it is worse at, and
  *   no worse where it already won. That trade is the whole argument for hybrid.
  * - Fusion is RRF rather than score blending: BM25 scores and cosine similarities live on
@@ -58,7 +58,7 @@ export function queryTerms(query: string): string[] {
  * entry, the wrong one, and that lone hit then carried full weight into fusion. BM25's IDF and
  * length normalisation already solve the problem AND was defending against.
  *
- * Quoting each term also makes a dotted identifier (`SettlementLayout.Build`) a phrase query, so
+ * Quoting each term also makes a dotted identifier (`OrderService.submit`) a phrase query, so
  * it still matches text the tokenizer split on punctuation.
  */
 export function buildMatchQuery(query: string): string | null {
