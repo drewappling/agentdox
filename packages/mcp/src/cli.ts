@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Standard I/O entry point for agentdox MCP (local, auth-disabled, full access).
 // `createMcpServer` (the shared factory) lives in index.ts and is also used by the
 // server package to build per-connection HTTP MCP sessions.

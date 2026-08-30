@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import { AgentDox } from '@agentdox/core';

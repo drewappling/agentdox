@@ -1,7 +1,8 @@
 {
   "name": "@agentdox/sdk",
   "version": "0.1.0",
-  "private": true,
+  "description": "Typed TypeScript client for the agentdox REST API. Works in Node and the browser.",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,12 +12,27 @@
       "import": "./dist/index.js"
     }
   },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/drewappling/agentdox#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/drewappling/agentdox.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/drewappling/agentdox/issues"
+  },
+  "keywords": ["agentdox", "sdk", "client", "memory", "context", "rag"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agentdox/types": "*"
+    "@agentdox/types": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",

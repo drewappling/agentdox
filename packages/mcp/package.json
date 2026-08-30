@@ -1,23 +1,43 @@
 {
   "name": "@agentdox/mcp",
   "version": "0.1.0",
-  "private": true,
+  "description": "Model Context Protocol server for agentdox (stdio CLI + guarded factory for HTTP transport).",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "bin": {
     "agentdox-mcp": "./dist/cli.js"
   },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/drewappling/agentdox#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/drewappling/agentdox.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/drewappling/agentdox/issues"
+  },
+  "keywords": ["agentdox", "mcp", "model-context-protocol", "memory", "context", "rag", "agent"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node --disable-warning=ExperimentalWarning dist/cli.js",
-    "dev": "tsx watch src/cli.ts"
+    "dev": "tsx watch src/cli.ts",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agentdox/core": "*",
+    "@agentdox/core": "^0.1.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.23.8"
   },

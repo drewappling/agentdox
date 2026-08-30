@@ -1,7 +1,8 @@
 {
   "name": "@agentdox/auth",
   "version": "0.1.0",
-  "private": true,
+  "description": "OIDC + Personal Access Token verifiers and scope-grant RBAC for agentdox.",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,12 +12,26 @@
       "import": "./dist/index.js"
     }
   },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/drewappling/agentdox#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/drewappling/agentdox.git",
+    "directory": "packages/auth"
+  },
+  "bugs": {
+    "url": "https://github.com/drewappling/agentdox/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agentdox/types": "*",
+    "@agentdox/types": "^0.1.0",
     "jose": "^5.9.6"
   },
   "devDependencies": {
