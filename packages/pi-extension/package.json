@@ -1,0 +1,59 @@
+{
+  "name": "agentdox-pi",
+  "version": "0.1.0",
+  "description": "agentdox memory backend for Oh My Pi — project-scoped recall/retain/reflect over the agentdox store",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "oh-my-pi",
+    "memory",
+    "context",
+    "rag",
+    "retrieval",
+    "agent",
+    "agentdox",
+    "mcp"
+  ],
+  "homepage": "https://github.com/drewappling/agentdox/tree/main/packages/pi-extension",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/drewappling/agentdox.git",
+    "directory": "packages/pi-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/drewappling/agentdox/issues"
+  },
+  "omp": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "bun smoke.mjs"
+  },
+  "peerDependencies": {
+    "@oh-my-pi/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "typescript": "^5.5.4"
+  }
+}

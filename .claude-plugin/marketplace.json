@@ -1,0 +1,30 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agentdox",
+  "owner": {
+    "name": "drewappling",
+    "email": "drewappling@gmail.com"
+  },
+  "metadata": {
+    "description": "agentdox plugins for Oh My Pi and Claude Code",
+    "version": "0.1.0",
+    "pluginRoot": "."
+  },
+  "plugins": [
+    {
+      "name": "agentdox-memory",
+      "description": "agentdox memory backend: project-scoped recall on session start, automatic retention of conversation turns, and recall/retain/reflect tools over the agentdox store. Run with memory.backend: off.",
+      "version": "0.1.0",
+      "author": {
+        "name": "drewappling",
+        "email": "drewappling@gmail.com"
+      },
+      "homepage": "https://github.com/drewappling/agentdox/tree/main/packages/pi-extension",
+      "repository": "https://github.com/drewappling/agentdox.git",
+      "license": "MIT",
+      "keywords": ["memory", "context", "rag", "agentdox", "agent"],
+      "category": "productivity",
+      "source": "./packages/pi-extension"
+    }
+  ]
+}

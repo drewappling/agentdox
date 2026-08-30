@@ -21,6 +21,7 @@ one store, with per-project scoping and optional OIDC auth.
 - [Quick start (local, no auth)](#quick-start-local-no-auth)
 - [Authentication & key generation](#authentication--key-generation)
 - [Wiring a coding agent (MCP + skill)](#wiring-a-coding-agent-mcp--skill)
+- [Oh My Pi memory backend](#oh-my-pi-memory-backend)
 - [Retrieval & embeddings](#retrieval--embeddings)
 - [The auto-model-router integration](#the-auto-model-router-integration)
 - [Docker deployment](#docker-deployment)
@@ -80,6 +81,7 @@ packages/
   sdk/     @agentdox/sdk     typed TypeScript client
   mcp/     @agentdox/mcp     MCP server (stdio cli + guarded factory)
   web/     @agentdox/web     Svelte 5 + Vite web app
+  pi-extension/  agentdox-pi   Oh My Pi memory-backend extension (recall/retain/reflect)
 docs/architecture/           design docs (rag, authentication, multi-tenancy)
 deploy/                       Docker Compose stack (agentdox + Keycloak + Caddy)
 ```
@@ -194,6 +196,29 @@ finds a user-level copy at `~/.claude/skills/agentdox/SKILL.md`.
 > MCP config is read once at harness startup, and `${VAR}` is expanded from the launching shell's
 > environment — set `AGENTDOX_TOKEN` before starting the harness (or restart it), otherwise the
 > tools resolve an empty token and calls 401.
+
+## Oh My Pi memory backend
+
+Beyond the MCP tools above, agentdox ships a first-class **[Oh My Pi](https://www.npmjs.com/package/@oh-my-pi/pi-coding-agent) memory backend** as an extension ([`packages/pi-extension`](packages/pi-extension), published as `agentdox-pi`). It plugs agentdox into omp's session lifecycle so the agent uses it *without manual tool calls*:
+
+- **Recall on session start** — injects the project brief plus relevant memory, doc passages, and recent conversation for the workspace scope into the first model turn as background context.
+- **Automatic retention** — opens an agentdox session and appends completed turns, so a later session's recall can draw on this one by relevance.
+- **`recall` / `retain` / `reflect` tools** — mirroring the ecosystem's memory tools, over the shared store.
+
+Install from the marketplace and run with omp's native backend off:
+
+```
+/marketplace add drewappling/agentdox
+/marketplace install agentdox-memory@agentdox
+```
+
+```yaml
+# ~/.omp/agent/config.yml
+memory:
+  backend: off            # this extension is the memory layer
+```
+
+Config reuses agentdox's `.env.agentdox` convention (`AGENTDOX_URL`, `AGENTDOX_TOKEN`, `AGENTDOX_SCOPE`); scope defaults to the workspace folder slug. Unlike the local/file backends, this is a **shared, inspectable** store — the same data the web UI and other agents see. Full details: [`packages/pi-extension/README.md`](packages/pi-extension/README.md).
 
 ## Retrieval & embeddings
 
