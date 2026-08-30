@@ -21,7 +21,7 @@
   async function load() {
     const mine = ++seq;
     try {
-      const r = await api().memory.list();
+      const r = await api().memory.list({ category: category.trim() || undefined });
       if (mine === seq) { entries = r; error = ''; }
     } catch (e) {
       if (mine === seq) error = (e as Error).message;
