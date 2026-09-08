@@ -28,8 +28,9 @@ Problems that block a multi-tenant SaaS:
    names. Docs and Sessions *do* have `scope`; Memory must too.
 4. **No onboarding.** A new user logs in and lands on an empty Memory list with no
    project selected, no guidance, and no path to "connect your first agent."
-5. **Admin surface is missing.** PATs (`/auth/tokens`) exist in the API but have no UI.
-   Membership, usage, and project provisioning tokens are invisible to humans.
+5. **Admin surface is thin.** PATs now have a Tokens page (list, mint with grants, revoke;
+   `/auth/me` shows a caller its own grants), but membership, usage, and project provisioning
+   tokens are still invisible to humans.
 6. **Hash routes are not deep-linkable per project.** `#/memory` carries no tenant/project
    identity, so views can't be shared, bookmarked, or restored — and stale state survives
    project switches.

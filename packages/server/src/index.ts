@@ -89,6 +89,22 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     return true;
   };
 
+  // Who am I: the caller's principal and grants. Any valid token may ask; with auth off the
+  // local principal answers. Lets a client (the auto-model-router team dashboard, the web UI)
+  // check a pasted token before relying on it.
+  app.get('/auth/me', async (req, reply) => {
+    if (!guard(req, reply, auth, principalOf(req))) return;
+    const p = principalOf(req);
+    return {
+      authEnabled: auth.enabled,
+      sub: p?.sub ?? 'local',
+      name: p?.name,
+      kind: p?.kind ?? 'local',
+      grants: p?.grants ?? { '*': 'admin' },
+      wildcardAdmin: !auth.enabled || p?.grants['*'] === 'admin',
+    };
+  });
+
   app.get('/auth/tokens', async (req, reply) => {
     if (!adminOnly(req, reply)) return;
     return dox.pat.list();

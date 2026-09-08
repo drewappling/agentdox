@@ -18,9 +18,24 @@ export interface PatSummary {
   id: string;
   name?: string;
   sub: string;
+  /** scope -> role; `*` is the wildcard. */
+  grants: Record<string, Role>;
   createdAt: string;
   expiresAt?: number | null;
   revoked: boolean;
+}
+
+function parseGrants(json: string): Record<string, Role> {
+  const grants: Record<string, Role> = {};
+  try {
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object') {
+      for (const [k, v] of Object.entries(parsed)) if (typeof v === 'string') grants[k] = v as Role;
+    }
+  } catch {
+    /* malformed grants -> empty */
+  }
+  return grants;
 }
 
 /** Issues, stores (hashed), lists, and revokes Personal Access Tokens. */
@@ -63,21 +78,10 @@ export class PatService implements PatStore {
       .get(hash) as Row | undefined;
     if (!row) return null;
     if (row.expires_at && row.expires_at < Date.now()) return null;
-    const grants: Record<string, Role> = {};
-    try {
-      const parsed = JSON.parse(row.grants_json) as Record<string, unknown>;
-      if (parsed && typeof parsed === 'object') {
-        for (const [k, v] of Object.entries(parsed)) {
-          if (typeof v === 'string') grants[k] = v as Role;
-        }
-      }
-    } catch {
-      /* malformed grants -> empty */
-    }
     return {
       sub: row.sub,
       name: row.name ?? undefined,
-      grants,
+      grants: parseGrants(row.grants_json),
       expiresAt: row.expires_at,
     };
   }
@@ -98,6 +102,7 @@ export class PatService implements PatStore {
       id: r.id,
       name: r.name ?? undefined,
       sub: r.sub,
+      grants: parseGrants(r.grants_json),
       createdAt: r.created_at,
       expiresAt: r.expires_at,
       revoked: r.revoked === 1,

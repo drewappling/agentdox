@@ -1,4 +1,5 @@
 import type {
+  Role,
   ContextRequest,
   ContextSlice,
   ContextSnapshot,
@@ -15,6 +16,33 @@ import type {
   Session,
   SessionMessage,
 } from '@agentdox/types';
+
+export interface WhoAmI {
+  authEnabled: boolean;
+  sub: string;
+  name?: string;
+  kind: string;
+  grants: Record<string, Role>;
+  /** True when the token may mint other tokens and create any project. */
+  wildcardAdmin: boolean;
+}
+
+export interface TokenSummary {
+  id: string;
+  name?: string;
+  sub: string;
+  grants: Record<string, Role>;
+  createdAt: string;
+  expiresAt?: number | null;
+  revoked: boolean;
+}
+
+export interface IssuedToken {
+  id: string;
+  token: string;
+  expiresAt?: number | null;
+  grants: Record<string, Role>;
+}
 
 export interface MemoryFilter {
   category?: string;
@@ -177,6 +205,15 @@ export class AgentDoxClient {
   };
 
   // ---- Projects (agent-provisioned workspaces) ----
+  /** Personal access tokens. `me` works for any valid token; the rest need a wildcard-admin token. */
+  tokens = {
+    me: () => this.request<WhoAmI>('GET', '/auth/me'),
+    list: () => this.request<TokenSummary[]>('GET', '/auth/tokens'),
+    /** The raw token comes back exactly once. */
+    create: (input: { name?: string; grants: Record<string, Role>; ttlMs?: number }) => this.request<IssuedToken>('POST', '/auth/tokens', input),
+    revoke: (id: string) => this.request<{ ok: boolean }>('DELETE', `/auth/tokens/${encodeURIComponent(id)}`),
+  };
+
   projects = {
     list: () => this.request<Project[]>('GET', '/projects'),
     get: (slug: string) => this.request<Project>('GET', `/projects/${encodeURIComponent(slug)}`),

@@ -132,7 +132,11 @@ everything else through the API. Keys come in three flavours:
    ```
 
    PATs are stored **SHA-256-hashed** (never in plaintext); revoke with
-   `DELETE /auth/tokens/:id`, list with `GET /auth/tokens` (both admin-only).
+   `DELETE /auth/tokens/:id`, list with `GET /auth/tokens` (both admin-only). The web UI's
+   **Tokens** page does the same without curl: sign in with a wildcard-admin token, name the
+   token, pick its grants (a preset covers the auto-model-router team edition, which needs
+   `{"*":"admin"}` to create a project per group), and copy it once. Any token can ask
+   `GET /auth/me` what it is allowed to do.
 3. **Project provisioning tokens** — `POST /projects` / `project_ensure` on a *new* slug returns a
    scoped `{slug}:admin` PAT (shown once), so an agent can bootstrap its own project workspace.
 

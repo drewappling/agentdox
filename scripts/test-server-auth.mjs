@@ -82,11 +82,25 @@ r = await get('/memory', demo);
 const memSince = r.body;
 check('demo reader list filtered to readable scope', Array.isArray(memSince) && memSince.every((e) => e.category === 'demo'));
 
-// admin can mint + revoke
+// any token can ask who it is; the answer carries its grants
+r = await get('/auth/me', demo);
+check('demo reader /auth/me -> its grants, not wildcard admin', r.status === 200 && r.body.grants.demo === 'read' && r.body.wildcardAdmin === false);
+r = await get('/auth/me', ADMIN);
+check('admin /auth/me -> wildcard admin', r.status === 200 && r.body.wildcardAdmin === true);
+r = await get('/auth/me');
+check('no token /auth/me -> 401', r.status === 401);
+r = await get('/auth/tokens', demo);
+check('demo reader cannot list tokens -> 403', r.status === 403);
+
+// admin can mint + revoke; the list shows each token's grants
 r = await post('/auth/tokens', ADMIN, { grants: { '*': 'admin' } });
 const second = await r.body;
+r = await get('/auth/tokens', ADMIN);
+check('token list carries grants', r.status === 200 && r.body.some((t) => t.id === second.id && t.grants['*'] === 'admin') && r.body.some((t) => t.name === 'demo-reader' && t.grants.demo === 'read'));
 r = await del(`/auth/tokens/${second.id}`, ADMIN);
 check('admin revokes PAT', r.status === 200);
+r = await get('/auth/tokens', ADMIN);
+check('revoked token stays listed as revoked', r.body.some((t) => t.id === second.id && t.revoked === true));
 
 // ---- Regression: unscoped list/search must not leak across scopes (CWE-862 / CWE-306) ----
 // Seed matching content in two scopes; the demo-reader may only read `demo`.

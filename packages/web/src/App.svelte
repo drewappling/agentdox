@@ -8,6 +8,7 @@
   import Sessions from './views/Sessions.svelte';
   import Context from './views/Context.svelte';
   import Projects from './views/Projects.svelte';
+  import Tokens from './views/Tokens.svelte';
 
   const readHash = () => (window.location.hash.replace(/^#/, '').split('?')[0] || '/memory');
   let route = $state(readHash());
@@ -48,6 +49,7 @@
     ['/docs', 'Docs'],
     ['/sessions', 'Sessions'],
     ['/context', 'Context'],
+    ['/tokens', 'Tokens'],
   ] as const;
 </script>
 
@@ -83,6 +85,8 @@
       <Sessions />
     {:else if route === '/context'}
       <Context />
+    {:else if route === '/tokens'}
+      <Tokens />
     {:else}
       <Memory />
     {/if}
