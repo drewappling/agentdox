@@ -340,6 +340,25 @@ npm run test:retrieval     # ranking regression fixture (vector checks skip with
 End-to-end web tests use Playwright (`e2e/`); credentials and the IdP host are environment-overridable
 (`E2E_USER`, `E2E_PASS`, `E2E_KEYCLOAK_HOST`).
 
+## Publishing
+
+`@agentdox/types`, `auth`, `sdk`, `core`, `mcp` and `server` are published to npm from a
+version tag; the web app is private and the pi extension is not part of the flow. Every
+package carries the same version and the sibling ranges follow it:
+
+```bash
+node scripts/set-version.mjs 0.1.1   # every package.json, root included
+npm install                          # refreshes package-lock.json
+git commit -am "v0.1.1" && git tag v0.1.1 && git push origin main v0.1.1
+```
+
+The tag runs `.github/workflows/release.yml`: `npm ci`, build the six packages, check
+each version equals the tag, publish in dependency order (skipping a version already on
+the registry, so a partly published tag can be re-run), then a GitHub Release. The
+workflow needs an `NPM_TOKEN` repository secret with publish rights on the `@agentdox`
+scope. Embedders install `@agentdox/server` and call `startServer(...)`; the CLI is
+`npx @agentdox/server`.
+
 ## License
 
 [MIT](LICENSE) © 2026 Drew Appling.

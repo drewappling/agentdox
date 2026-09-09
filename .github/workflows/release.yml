@@ -1,0 +1,74 @@
+name: release
+
+# Release flow: push a version tag (v0.1.0) to publish the @agentdox/* packages
+# to npm and create a GitHub Release. Bump every package with
+# `node scripts/set-version.mjs X.Y.Z`, commit, tag vX.Y.Z, push the tag.
+#
+# Packages publish in dependency order, each only when that exact version is not
+# on the registry yet, so re-running a tag (or tagging a version that partly
+# published) finishes the job instead of failing on the first duplicate.
+# The web app is private and the pi extension is not part of this flow.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the publishable packages
+        run: |
+          for w in types auth sdk core mcp server; do
+            npm run build -w "@agentdox/$w"
+          done
+
+      - name: Check the tag against the package versions
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          for w in types auth sdk core mcp server; do
+            V=$(node -p "require('./packages/$w/package.json').version")
+            if [ "$V" != "$TAG" ]; then
+              echo "::error::@agentdox/$w is $V but the tag is $TAG; run scripts/set-version.mjs first"
+              exit 1
+            fi
+          done
+
+      - name: Publish to npm
+        id: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          published=""
+          for w in types auth sdk core mcp server; do
+            if npm view "@agentdox/$w@$TAG" version >/dev/null 2>&1; then
+              echo "@agentdox/$w@$TAG is already on npm; skipping"
+              continue
+            fi
+            npm publish -w "@agentdox/$w" --access public
+            published="$published @agentdox/$w"
+          done
+          echo "published=${published# }" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: steps.publish.outputs.published != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          name: agentdox ${{ github.ref_name }}
+          body: |
+            Published to npm: ${{ steps.publish.outputs.published }} at `${{ github.ref_name }}`.
+            Run the server with `npx @agentdox/server`, or embed it with `import { startServer } from "@agentdox/server"`.
