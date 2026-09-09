@@ -23,12 +23,23 @@ export interface BuildOptions {
   dbPath?: string;
   env?: NodeJS.ProcessEnv;
   authEnabled?: boolean;
+  /** Interface to bind; 0.0.0.0 by default. An embedding host binds 127.0.0.1. */
+  host?: string;
+  /** Fastify request logging; on by default, off for an embedding host with its own log. */
+  logger?: boolean;
+  /**
+   * An embedding host resolves the caller itself (its own sessions, its own member keys) and
+   * hands over the principal — REST and /mcp alike then enforce that principal's grants.
+   * Returning null falls through to the bearer chain (PAT, OIDC), so both coexist.
+   */
+  resolvePrincipal?: (req: FastifyRequest) => Principal | null | Promise<Principal | null>;
 }
 
 export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: AgentDox; auth: AuthContext } {
   const env = opts.env ?? process.env;
   const dbPath = opts.dbPath ?? resolve(repoRoot, 'data', 'agentdox.db');
-  mkdirSync(resolve(repoRoot, 'data'), { recursive: true });
+  // The default lives under the repo; a caller-chosen path is the caller's to create.
+  if (opts.dbPath === undefined) mkdirSync(resolve(repoRoot, 'data'), { recursive: true });
 
   const dox = new AgentDox(dbPath);
   // Account for env-injected auth flag (used by tests) plus process env.
@@ -49,7 +60,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     dox.pat.issue({ name: 'bootstrap-admin', grants: { '*': 'admin' }, rawToken: adminToken });
   }
 
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: opts.logger ?? true });
   const corsOrigins = (mergedEnv.AGENTDOX_CORS_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   // Reflect any origin by default (local/dev); restrict to an explicit allowlist in shared
   // deployments by setting AGENTDOX_CORS_ORIGINS to a comma-separated list.
@@ -69,6 +80,10 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
 
   // Resolve the caller's principal (without rejecting) so handlers can guard.
   app.addHook('onRequest', async (req) => {
+    if (opts.resolvePrincipal) {
+      const p = await opts.resolvePrincipal(req);
+      if (p) { principals.set(req, p); return; }
+    }
     if (auth.enabled && auth.chain) {
       principals.set(req, await authenticate(req, auth));
     } else {
@@ -564,9 +579,9 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
  */
 const EMBED_BATCH_PER_TICK = 256;
 
-function startContextScheduler(dox: AgentDox): { intervalSeconds: number; stop: () => void } | null {
-  const seconds = parseInt(process.env.AGENTDOX_CONTEXT_INTERVAL_SECONDS ?? '900', 10);
-  const maxScopes = parseInt(process.env.AGENTDOX_CONTEXT_MAX_SCOPES ?? '50', 10);
+function startContextScheduler(dox: AgentDox, env: NodeJS.ProcessEnv = process.env): { intervalSeconds: number; stop: () => void } | null {
+  const seconds = parseInt(env.AGENTDOX_CONTEXT_INTERVAL_SECONDS ?? '900', 10);
+  const maxScopes = parseInt(env.AGENTDOX_CONTEXT_MAX_SCOPES ?? '50', 10);
   if (!(seconds > 0)) return null; // 0 / negative disables
 
   const runOnce = async () => {
@@ -609,11 +624,11 @@ export async function startServer(opts: BuildOptions & { port?: number } = {}): 
     const check = () => (auth.chain ? resolve_() : setTimeout(check, 25));
     check();
   });
-  await app.listen({ port, host: '0.0.0.0' });
+  await app.listen({ port, host: opts.host ?? '0.0.0.0' });
   // Report the actual bound port (matters when port === 0 / ephemeral).
   const actualPort = (app.server.address() as import('node:net').AddressInfo).port;
   // Start the periodic auto-context job.
-  const sched = startContextScheduler(dox);
+  const sched = startContextScheduler(dox, { ...process.env, ...opts.env });
   console.log(`[agentdox] auto-context job: ${sched ? `every ${sched.intervalSeconds}s` : 'disabled'}`);
   return { app, dox, auth, port: actualPort, stopScheduler: sched ? sched.stop : () => undefined };
 }
