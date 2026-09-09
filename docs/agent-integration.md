@@ -113,7 +113,7 @@ host SQLite file. It is *not* shared with a Docker-hosted web UI:
     "agentdox": {
       "command": "node",
       "args": ["/path/to/agentdox/packages/mcp/dist/cli.js"],
-      "env": { "AGENTDOX_DB": "/path/to/agentdox/data/agentdox.db" }
+      "env": { "AGENTDOX_DB": "/path/to/agentdox/data/agentdox.db" }   // or AGENTDOX_DATABASE_URL for Postgres
     }
   }
 }

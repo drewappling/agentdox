@@ -73,16 +73,16 @@ check('OIDC: verified via chain', chained.ok);
 const dbPath = 'data/test-auth.db';
 rmSync(dbPath, { force: true });
 mkdirSync('data', { recursive: true });
-const dox = new AgentDox(dbPath);
+const dox = await AgentDox.open(dbPath);
 
-const { id, token } = dox.pat.issue({ name: 'ci-bot', grants: { demo: 'write', '*': 'read' }, ttlMs: 3600_000 });
+const { id, token } = await dox.pat.issue({ name: 'ci-bot', grants: { demo: 'write', '*': 'read' }, ttlMs: 3600_000 });
 const patProvider = new PatAuthProvider(dox.pat);
 const patOk = await patProvider.verify(token);
 check('PAT: issued token verifies', patOk.ok && patOk.principal.grants['demo'] === 'write');
-check('PAT: stored hashed (no plaintext in DB)', !dox.store.db.prepare('SELECT * FROM pat').all().some((r) => JSON.stringify(r).includes(token)));
+check('PAT: stored hashed (no plaintext in DB)', !(await dox.store.all('SELECT * FROM pat')).some((r) => JSON.stringify(r).includes(token)));
 
 check('PAT: wrong token rejected', !(await patProvider.verify('not-the-token')).ok);
-dox.pat.revoke(id);
+await dox.pat.revoke(id);
 check('PAT: revoked token rejected', !(await patProvider.verify(token)).ok);
 
 // ---------- 3) RBAC helpers ----------
@@ -93,7 +93,7 @@ check('RBAC: no grant blocks on unknown scope', !authorize(p, 'nope', 'read'));
 check('RBAC: local principal is wildcard admin', authorize(localPrincipal(), 'anything', 'admin'));
 
 oidc.close();
-dox.close();
+await dox.close();
 rmSync(dbPath, { force: true });
 rmSync(dbPath + '-wal', { force: true });
 rmSync(dbPath + '-shm', { force: true });

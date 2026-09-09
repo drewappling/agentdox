@@ -38,6 +38,8 @@ function parseGrants(json: string): Record<string, Role> {
   return grants;
 }
 
+const expiry = (v: number | null): number | null => (v === null || v === undefined ? null : Number(v));
+
 /** Issues, stores (hashed), lists, and revokes Personal Access Tokens. */
 export class PatService implements PatStore {
   constructor(private readonly store: Store) {}
@@ -46,43 +48,33 @@ export class PatService implements PatStore {
    * Issue a new PAT. The raw token is returned exactly once; only its SHA-256 hash is stored.
    * `grants` maps an agentdox scope -> role. Use `*` for wildcard/admin.
    */
-  issue(opts: { name?: string; grants: Record<string, Role>; ttlMs?: number; rawToken?: string }): { id: string; token: string; expiresAt?: number | null } {
+  async issue(opts: { name?: string; grants: Record<string, Role>; ttlMs?: number; rawToken?: string }): Promise<{ id: string; token: string; expiresAt?: number | null }> {
     const id = newId('pat');
     const token = opts.rawToken ?? generateToken();
     const expiresAt = opts.ttlMs ? Date.now() + opts.ttlMs : null;
-    this.store.db
-      .prepare(
-        `INSERT INTO pat (id, token_hash, sub, name, grants_json, created_at, expires_at, revoked)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
-      )
-      .run(
-        id,
-        hashToken(token),
-        '__admin__',
-        opts.name ?? null,
-        JSON.stringify(opts.grants),
-        nowIso(),
-        expiresAt,
-      );
+    await this.store.run(
+      `INSERT INTO pat (id, token_hash, sub, name, grants_json, created_at, expires_at, revoked)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+      [id, hashToken(token), '__admin__', opts.name ?? null, JSON.stringify(opts.grants), nowIso(), expiresAt],
+    );
     return { id, token, expiresAt };
   }
 
-  /** True if a PAT with this raw token already exists (sync; used for idempotent bootstrap). */
-  existsByRawToken(rawToken: string): boolean {
-    return !!this.store.db.prepare('SELECT 1 FROM pat WHERE token_hash = ?').get(hashToken(rawToken));
+  /** True if a PAT with this raw token already exists (used for idempotent bootstrap). */
+  async existsByRawToken(rawToken: string): Promise<boolean> {
+    return !!(await this.store.get('SELECT 1 AS one FROM pat WHERE token_hash = ?', [hashToken(rawToken)]));
   }
 
   async findByHash(hash: string): Promise<PatRecord | null> {
-    const row = this.store.db
-      .prepare('SELECT * FROM pat WHERE token_hash = ? AND revoked = 0')
-      .get(hash) as Row | undefined;
+    const row = await this.store.get<Row>('SELECT * FROM pat WHERE token_hash = ? AND revoked = 0', [hash]);
     if (!row) return null;
-    if (row.expires_at && row.expires_at < Date.now()) return null;
+    const expiresAt = expiry(row.expires_at);
+    if (expiresAt && expiresAt < Date.now()) return null;
     return {
       sub: row.sub,
       name: row.name ?? undefined,
       grants: parseGrants(row.grants_json),
-      expiresAt: row.expires_at,
+      expiresAt,
     };
   }
 
@@ -91,21 +83,21 @@ export class PatService implements PatStore {
     return this.findByHash(hashToken(rawToken));
   }
 
-  revoke(id: string): boolean {
-    const res = this.store.db.prepare('UPDATE pat SET revoked = 1 WHERE id = ?').run(id);
+  async revoke(id: string): Promise<boolean> {
+    const res = await this.store.run('UPDATE pat SET revoked = 1 WHERE id = ?', [id]);
     return res.changes > 0;
   }
 
-  list(): PatSummary[] {
-    const rows = this.store.db.prepare('SELECT * FROM pat ORDER BY created_at DESC').all() as unknown as Row[];
+  async list(): Promise<PatSummary[]> {
+    const rows = await this.store.all<Row>('SELECT * FROM pat ORDER BY created_at DESC');
     return rows.map((r) => ({
       id: r.id,
       name: r.name ?? undefined,
       sub: r.sub,
       grants: parseGrants(r.grants_json),
       createdAt: r.created_at,
-      expiresAt: r.expires_at,
-      revoked: r.revoked === 1,
+      expiresAt: expiry(r.expires_at),
+      revoked: Number(r.revoked) === 1,
     }));
   }
 }

@@ -9,6 +9,10 @@
 // The corpus is synthetic and self-contained so the test is deterministic and portable — it
 // must not depend on whatever happens to be in the developer's live store.
 //
+// Runs on SQLite by default. AGENTDOX_TEST_DATABASE_URL=postgres://… runs the same fixture on
+// Postgres, in a throwaway schema that is dropped at the end, so both engines are held to the
+// same ranking bar.
+//
 // Embeddings are optional. Lexical assertions always run; the vector-dependent ones are
 // skipped (loudly) when no provider is reachable, because CI usually has no model server.
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -24,7 +28,10 @@ const check = (name, cond, detail = '') => {
 };
 
 const dir = mkdtempSync(join(tmpdir(), 'agentdox-retrieval-'));
-const dox = new AgentDox(join(dir, 'test.db'));
+const pgUrl = process.env.AGENTDOX_TEST_DATABASE_URL;
+const schema = `agentdox_test_${Date.now().toString(36)}`;
+const dox = await AgentDox.open(pgUrl || join(dir, 'test.db'), { ...process.env, ...(pgUrl ? { AGENTDOX_PG_SCHEMA: schema } : {}) });
+console.log(`storage: ${dox.storage}`);
 const SCOPE = 'fixture';
 
 // ---------- corpus ----------
@@ -46,10 +53,10 @@ const MEMORY = [
   ['Colour grading was moved from the capture stage to the compositor in the 4.2 release.', 0.6],
 ];
 for (const [content, importance] of MEMORY) {
-  dox.memory.create({ content, category: SCOPE, importance, tags: [] });
+  await dox.memory.create({ content, category: SCOPE, importance, tags: [] });
 }
 
-dox.docs.create({
+await dox.docs.create({
   slug: 'fixture/handbook',
   title: 'Field handbook',
   scope: SCOPE,
@@ -71,7 +78,7 @@ Below freezing, prime the pump twice and wait thirty seconds between attempts. T
 draws heavily and a marginal battery will read fine at rest and still fail under load.
 `,
 });
-dox.docs.create({
+await dox.docs.create({
   slug: 'fixture/appendix',
   title: 'Appendix',
   scope: SCOPE,
@@ -81,8 +88,9 @@ dox.docs.create({
 // ---------- lexical assertions (always run) ----------
 const topMemory = async (q) => (await dox.memory.search(q, { category: SCOPE, limit: 3 })).map((h) => h.entry.content);
 const topPassages = async (q) => (await dox.docs.searchChunks(q, { scope: SCOPE, limit: 3 }));
+const findMemory = async (prefix) => (await dox.memory.list({ category: SCOPE, limit: 200 })).find((e) => e.content.startsWith(prefix));
 
-const stats = dox.index.stats(SCOPE);
+const stats = await dox.index.stats(SCOPE);
 check('index builds on write', stats.memory.total === MEMORY.length && stats.chunks.total > 0,
   `memory=${stats.memory.total} chunks=${stats.chunks.total}`);
 
@@ -117,20 +125,49 @@ check('index builds on write', stats.memory.total === MEMORY.length && stats.chu
 }
 {
   const before = await topMemory('colour grading stage');
-  const entry = dox.memory.list({ category: SCOPE, limit: 200 }).find((e) => e.content.startsWith('Colour grading'));
-  dox.memory.update(entry.id, { content: 'Tone mapping moved from the capture stage to the compositor in the 4.2 release.' });
+  const entry = await findMemory('Colour grading');
+  await dox.memory.update(entry.id, { content: 'Tone mapping moved from the capture stage to the compositor in the 4.2 release.' });
   const after = await topMemory('tone mapping compositor');
   check('an edited entry is searchable by its new text', /Tone mapping/.test(after[0] ?? ''), `got: ${(after[0] ?? '').slice(0, 90)}`);
   check('and no longer by the old text', !/Colour grading/.test((await topMemory('colour grading stage'))[0] ?? ''),
     `before: ${(before[0] ?? '').slice(0, 40)}`);
-  dox.memory.update(entry.id, { content: MEMORY[6][0] });
+  await dox.memory.update(entry.id, { content: MEMORY[6][0] });
 }
 {
-  const removed = dox.memory.list({ category: SCOPE, limit: 200 }).find((e) => e.content.startsWith('Depot logistics'));
-  dox.memory.remove(removed.id);
+  const removed = await findMemory('Depot logistics');
+  await dox.memory.remove(removed.id);
   const hits = await topMemory('depot logistics reconciliation');
   check('a deleted entry leaves the index', !hits.some((h) => h.startsWith('Depot logistics')));
-  dox.memory.create({ content: MEMORY[4][0], category: SCOPE, importance: 0.5, tags: [] });
+  await dox.memory.create({ content: MEMORY[4][0], category: SCOPE, importance: 0.5, tags: [] });
+}
+{
+  // Tag filters and null-safe slug lookups go through the dialect fragments; both engines must agree.
+  const tagged = await dox.memory.create({ content: 'A tagged fact for the filter test.', category: SCOPE, importance: 0.4, tags: ['alpha', 'beta'] });
+  const byTag = await dox.memory.list({ category: SCOPE, tag: 'beta' });
+  check('tag filter finds the tagged entry only', byTag.length === 1 && byTag[0].id === tagged.id, `got ${byTag.length}`);
+  await dox.memory.remove(tagged.id);
+  const bySlug = await dox.docs.getBySlug('fixture/appendix', SCOPE);
+  check('slug lookup within a scope', bySlug?.title === 'Appendix');
+  check('slug lookup in another scope finds nothing', (await dox.docs.getBySlug('fixture/appendix', 'elsewhere')) === null);
+}
+{
+  // Sessions: messages get ids from the engine, and relevance reaches past the recent tail.
+  const s = await dox.sessions.create({ scope: SCOPE, title: 'fixture' });
+  const first = await dox.sessions.append(s.id, { role: 'user', content: 'The pump primer valve sticks in cold weather, remember that.' });
+  for (let i = 0; i < 6; i++) await dox.sessions.append(s.id, { role: 'assistant', content: `filler turn ${i}` });
+  check('appended messages carry numeric ids', Number.isInteger(first.id));
+  const older = await dox.sessions.relevantMessages(SCOPE, 'primer valve sticking', { limit: 2 });
+  check('an older relevant message is found by search', older.some((m) => /primer valve/.test(m.content)));
+  const ctx = await dox.context.assemble({ scope: SCOPE, query: 'primer valve', sessionLimit: 3 });
+  check('context assembly renders memory, passages and conversation', /## Memory/.test(ctx.prompt) && ctx.sessionMessages.length > 0);
+  check('snapshot round-trips', (await dox.context.saveSnapshot(SCOPE)).chars > 0 && (await dox.context.getSnapshot(SCOPE))?.scope === SCOPE);
+  check('scheduler targets include the fixture scope', (await dox.context.targetScopes()).includes(SCOPE));
+}
+{
+  const rebuilt = await dox.index.rebuildLexical();
+  check('a rebuild re-indexes everything', rebuilt.memory === MEMORY.length && rebuilt.chunks > 0 && rebuilt.messages === 7, JSON.stringify(rebuilt));
+  const hits = await topMemory('which class calls WheelLayout.Solve at runtime');
+  check('search still works after the rebuild', /CarriageBuilder\.Assemble/.test(hits[0] ?? ''));
 }
 
 // ---------- vector assertions (only when a provider answers) ----------
@@ -169,17 +206,18 @@ if (!reachable) {
       `got: ${(hits[0] ?? '').slice(0, 90)}`);
   }
   {
-    const entry = dox.memory.list({ category: SCOPE, limit: 200 }).find((e) => e.content.startsWith('Nightly export'));
-    const hashOf = () =>
-      dox.store.db.prepare('SELECT content_hash FROM embeddings WHERE owner_id = ?').get(entry.id)?.content_hash;
-    const before = hashOf();
-    dox.memory.update(entry.id, { content: 'Nightly export batches were replaced by an on-demand queue in release 5.0.' });
+    const entry = await findMemory('Nightly export');
+    const hashOf = async () =>
+      (await dox.store.get('SELECT content_hash FROM embeddings WHERE owner_id = ?', [entry.id]))?.content_hash;
+    const before = await hashOf();
+    await dox.memory.update(entry.id, { content: 'Nightly export batches were replaced by an on-demand queue in release 5.0.' });
     await dox.index.backfillEmbeddings({ scope: SCOPE });
-    check('an edited entry is re-embedded (content_hash is compared)', before !== hashOf());
+    check('an edited entry is re-embedded (content_hash is compared)', before !== (await hashOf()));
   }
 }
 
 // ---------- teardown ----------
 console.log(`\n${results.filter(Boolean).length}/${results.length} checks passed`);
-dox.close();
+if (pgUrl) await dox.store.exec(`DROP SCHEMA "${schema}" CASCADE`);
+await dox.close();
 rmSync(dir, { recursive: true, force: true });

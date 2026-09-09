@@ -1,5 +1,5 @@
 import type { MemoryEntry, MemoryHit } from '@agentdox/types';
-import type { Store } from './db.js';
+import type { Param, Store } from './db.js';
 import { newId, nowIso, parseJsonArray, relevanceScore } from './util.js';
 import type { IndexService } from './indexer.js';
 import { fuseRRF, lexicalSearch, vectorSearch } from './retrieval.js';
@@ -54,7 +54,7 @@ export class MemoryService {
       content: row.content,
       category: row.category ?? undefined,
       target: row.target ?? undefined,
-      importance: row.importance,
+      importance: Number(row.importance),
       tags: parseJsonArray<string>(row.tags_json),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -62,7 +62,7 @@ export class MemoryService {
     };
   }
 
-  create(input: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'> & Partial<Pick<MemoryEntry, 'id'>>): MemoryEntry {
+  async create(input: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'> & Partial<Pick<MemoryEntry, 'id'>>): Promise<MemoryEntry> {
     const now = nowIso();
     const entry: MemoryEntry = {
       id: input.id ?? newId('mem'),
@@ -75,13 +75,11 @@ export class MemoryService {
       ...(input.target ? { target: input.target } : {}),
       ...(input.source ? { source: input.source } : {}),
     };
-    this.store.tx(() => {
-      this.store.db
-        .prepare(
-          `INSERT INTO memory (id, content, category, target, importance, tags_json, created_at, updated_at, source)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
+    await this.store.tx(async () => {
+      await this.store.run(
+        `INSERT INTO memory (id, content, category, target, importance, tags_json, created_at, updated_at, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
           entry.id,
           entry.content,
           entry.category ?? null,
@@ -91,19 +89,20 @@ export class MemoryService {
           entry.createdAt,
           entry.updatedAt,
           entry.source ?? null,
-        );
-      this.indexer?.indexMemory(entry);
+        ],
+      );
+      await this.indexer?.indexMemory(entry);
     });
     return entry;
   }
 
-  get(id: string): MemoryEntry | null {
-    const row = this.store.db.prepare('SELECT * FROM memory WHERE id = ?').get(id) as Row | undefined;
+  async get(id: string): Promise<MemoryEntry | null> {
+    const row = await this.store.get<Row>('SELECT * FROM memory WHERE id = ?', [id]);
     return row ? this.toEntry(row) : null;
   }
 
-  update(id: string, patch: Partial<Omit<MemoryEntry, 'id' | 'createdAt'>>): MemoryEntry | null {
-    const existing = this.get(id);
+  async update(id: string, patch: Partial<Omit<MemoryEntry, 'id' | 'createdAt'>>): Promise<MemoryEntry | null> {
+    const existing = await this.get(id);
     if (!existing) return null;
     const next: MemoryEntry = {
       ...existing,
@@ -113,13 +112,11 @@ export class MemoryService {
       updatedAt: nowIso(),
     };
     next.importance = clamp01(next.importance);
-    this.store.tx(() => {
-      this.store.db
-        .prepare(
-          `UPDATE memory SET content = ?, category = ?, target = ?, importance = ?, tags_json = ?, updated_at = ?, source = ?
-           WHERE id = ?`,
-        )
-        .run(
+    await this.store.tx(async () => {
+      await this.store.run(
+        `UPDATE memory SET content = ?, category = ?, target = ?, importance = ?, tags_json = ?, updated_at = ?, source = ?
+         WHERE id = ?`,
+        [
           next.content,
           next.category ?? null,
           next.target ?? null,
@@ -128,26 +125,27 @@ export class MemoryService {
           next.updatedAt,
           next.source ?? null,
           next.id,
-        );
-      this.indexer?.indexMemory(next);
+        ],
+      );
+      await this.indexer?.indexMemory(next);
     });
     return this.get(id);
   }
 
-  remove(id: string): boolean {
-    const res = this.store.db.prepare('DELETE FROM memory WHERE id = ?').run(id);
-    if (res.changes > 0) this.indexer?.removeMemory(id);
+  async remove(id: string): Promise<boolean> {
+    const res = await this.store.run('DELETE FROM memory WHERE id = ?', [id]);
+    if (res.changes > 0) await this.indexer?.removeMemory(id);
     return res.changes > 0;
   }
 
-  count(): number {
-    const row = this.store.db.prepare('SELECT COUNT(*) AS n FROM memory').get() as { n: number };
-    return row.n;
+  async count(): Promise<number> {
+    const row = await this.store.get<{ n: number }>('SELECT COUNT(*) AS n FROM memory');
+    return Number(row?.n ?? 0);
   }
 
-  list(filter: MemoryFilter = {}): MemoryEntry[] {
+  async list(filter: MemoryFilter = {}): Promise<MemoryEntry[]> {
     const clauses: string[] = [];
-    const args: (string | number | null)[] = [];
+    const args: Param[] = [];
     if (filter.category) {
       clauses.push('category = ?');
       args.push(filter.category);
@@ -157,19 +155,17 @@ export class MemoryService {
       args.push(filter.target);
     }
     if (filter.tag) {
-      clauses.push("EXISTS (SELECT 1 FROM json_each(tags_json) WHERE json_each.value = ?)");
+      clauses.push(this.store.sql.jsonArrayHas('tags_json'));
       args.push(filter.tag);
     }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const limit = filter.limit ?? 100;
-    const rows = this.store.db
-      .prepare(`SELECT * FROM memory ${where} ORDER BY importance DESC, updated_at DESC LIMIT ?`)
-      .all(...args, limit) as Row[];
+    const rows = await this.store.all<Row>(`SELECT * FROM memory ${where} ORDER BY importance DESC, updated_at DESC LIMIT ?`, [...args, limit]);
     return rows.map((r) => this.toEntry(r));
   }
 
   /**
-   * Hybrid search: BM25 fused with vector similarity, tilted by importance.
+   * Hybrid search: full-text ranking fused with vector similarity, tilted by importance.
    *
    * Falls back to the original term-frequency scorer when the fused result is empty — an index
    * that has not been built yet, or a query that is entirely stopwords, should still return
@@ -180,7 +176,7 @@ export class MemoryService {
     const boost = opts.importanceBoost ?? 1;
     const pool = limit * 4;
 
-    const lists = [lexicalSearch(this.store.db, 'memory_fts', query, { scope: opts.category, limit: pool })];
+    const lists = [await lexicalSearch(this.store, 'memory_fts', query, { scope: opts.category, limit: pool })];
 
     const provider = this.indexer?.embeddingProvider;
     if (provider) {
@@ -188,7 +184,7 @@ export class MemoryService {
         const [queryVec] = await provider.embed([query], 'query');
         if (queryVec) {
           lists.push(
-            vectorSearch(this.store.db, 'memory', queryVec, {
+            await vectorSearch(this.store, 'memory', queryVec, {
               scope: opts.category,
               limit: pool,
               model: provider.model,
@@ -205,7 +201,7 @@ export class MemoryService {
 
     const hits: MemoryHit[] = [];
     for (const row of fused) {
-      const entry = this.get(row.id);
+      const entry = await this.get(row.id);
       if (!entry) continue; // index drifted ahead of a delete
       if (opts.target && entry.target !== opts.target) continue;
       if (opts.tag && !entry.tags.includes(opts.tag)) continue;
@@ -216,9 +212,9 @@ export class MemoryService {
   }
 
   /** The pre-BM25 scorer, kept as a floor for un-indexed stores and degenerate queries. */
-  private legacySearch(query: string, opts: MemorySearchOptions): MemoryHit[] {
+  private async legacySearch(query: string, opts: MemorySearchOptions): Promise<MemoryHit[]> {
     const boost = opts.importanceBoost ?? 1;
-    const candidates = this.list({ category: opts.category, target: opts.target, tag: opts.tag, limit: 500 });
+    const candidates = await this.list({ category: opts.category, target: opts.target, tag: opts.tag, limit: 500 });
     const scored: MemoryHit[] = candidates.map((entry) => {
       const rel = relevanceScore(query, entry.content, entry.category ?? '', entry.target ?? '', entry.tags.join(' '));
       const score = rel + entry.importance * boost * 0.1;

@@ -7,7 +7,8 @@ markdown file nobody reads, a chat log that gets truncated. `agentdox` makes mem
 context **first-class, queryable, and assembled on demand** — so agents stop forgetting and stop
 carrying dead weight in every prompt.
 
-It runs as a small service backed by a single SQLite file, and exposes everything three ways: a
+It runs as a small service backed by a single SQLite file (or a Postgres database when several
+instances share one store), and exposes everything three ways: a
 **REST API**, an **MCP server** (stdio *and* streamable HTTP), and a **Svelte web UI** — all over
 one store, with per-project scoping and optional OIDC auth.
 
@@ -19,6 +20,7 @@ one store, with per-project scoping and optional OIDC auth.
 - [Features](#features)
 - [Repo layout](#repo-layout)
 - [Quick start (local, no auth)](#quick-start-local-no-auth)
+- [Storage: SQLite or Postgres](#storage-sqlite-or-postgres)
 - [Authentication & key generation](#authentication--key-generation)
 - [Wiring a coding agent (MCP + skill)](#wiring-a-coding-agent-mcp--skill)
 - [Oh My Pi memory backend](#oh-my-pi-memory-backend)
@@ -49,7 +51,8 @@ one store, with per-project scoping and optional OIDC auth.
 
 ## Features
 
-- **Hybrid retrieval, no vector database.** BM25 over SQLite FTS5 fused by reciprocal rank with
+- **Hybrid retrieval, no vector database.** BM25 over SQLite FTS5 (a `tsvector` under a GIN
+  index on Postgres) fused by reciprocal rank with
   cosine similarity over embeddings. Docs are chunked on markdown headings, so retrieval and
   assembly operate on **passages**, not whole files. Embeddings are optional and off by default.
   See [`docs/architecture/rag.md`](docs/architecture/rag.md).
@@ -75,7 +78,7 @@ one store, with per-project scoping and optional OIDC auth.
 ```
 packages/
   types/   @agentdox/types   shared TypeScript types (domain model)
-  core/    @agentdox/core    storage (SQLite) + memory/doc/context/session services + retrieval
+  core/    @agentdox/core    storage (SQLite or Postgres) + memory/doc/context/session services + retrieval
   auth/    @agentdox/auth    OIDC + PAT verifiers, scope-grant RBAC
   server/  @agentdox/server  Fastify REST API (+ MCP-over-HTTP mount)
   sdk/     @agentdox/sdk     typed TypeScript client
@@ -86,7 +89,7 @@ docs/architecture/           design docs (rag, authentication, multi-tenancy)
 deploy/                       Docker Compose stack (agentdox + Keycloak + Caddy)
 ```
 
-Requires **Node >= 20** (uses the built-in `node:sqlite`). npm workspaces monorepo.
+Requires **Node >= 20** (uses the built-in `node:sqlite`; Bun >= 1.4 also runs it). npm workspaces monorepo.
 
 ## Quick start (local, no auth)
 
@@ -103,6 +106,37 @@ npm run mcp           # MCP server over stdio (embeds the local SQLite store)
 ```
 
 The store is one SQLite file at `data/agentdox.db` (WAL mode). That's the whole database.
+For several instances sharing one store, see [Storage](#storage-sqlite-or-postgres).
+
+## Storage: SQLite or Postgres
+
+One process on one machine keeps the SQLite file. Several front doors sharing one store point
+at Postgres instead:
+
+```bash
+AGENTDOX_DATABASE_URL=postgres://user:pass@host:5432/agentdox   # tables under the schema `agentdox`
+AGENTDOX_PG_SCHEMA=agentdox                                      # another schema name, if you like
+```
+
+Both engines sit behind one store API in `@agentdox/core` (`AgentDox.open(target)` takes a
+file path or a URL), and the retrieval fixture (`npm run test:retrieval`) holds both to the same
+ranking bar: FTS5 `bm25()` on SQLite, `ts_rank_cd` over a stored `tsvector` on Postgres, the
+same `"term" OR "term"` query on each. The schema is created on first open; two instances
+starting together take turns through an advisory lock, and a rebuild of the index takes one too.
+With several instances, run the auto-context job on one of them
+(`AGENTDOX_CONTEXT_INTERVAL_SECONDS=0` elsewhere); MCP sessions live in the instance that
+opened them, so put sticky sessions in front of `/mcp` or pin agents to one instance.
+
+Moving between engines copies every table, ids and index rows included, so the target serves
+the moment the copy ends and no vector is recomputed:
+
+```bash
+npx agentdox-migrate --from data/agentdox.db --to postgres://user:pass@host/agentdox
+npx agentdox-migrate --from postgres://… --to ./copy.db --replace   # --replace empties the target first
+```
+
+`AGENTDOX_TEST_DATABASE_URL=postgres://…` makes `test:retrieval`, `test:projects` and
+`test:migrate` run against Postgres in throwaway schemas.
 
 ## Authentication & key generation
 
@@ -290,6 +324,8 @@ Server (`packages/server`, read from the environment):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `AGENTDOX_PORT` | `3003` | REST API port |
+| `AGENTDOX_DATABASE_URL` | — | `postgres://…`: share one store between instances (else the SQLite file) |
+| `AGENTDOX_PG_SCHEMA` | `agentdox` | Postgres schema the tables live under |
 | `AGENTDOX_AUTH_ENABLED` | `false` | Enforce bearer-token auth (else local single-user) |
 | `AGENTDOX_ADMIN_TOKEN` | — | Bootstrap wildcard-admin PAT, seeded on start |
 | `AGENTDOX_CORS_ORIGINS` | reflect any (dev) | Comma-separated allowlist for shared deployments |

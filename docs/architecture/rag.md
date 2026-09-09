@@ -70,7 +70,7 @@ embeddings.
 
 | Finding | Consequence |
 | --- | --- |
-| **FTS5 with `bm25()` is available in the built-in `node:sqlite`** (SQLite 3.51.3, verified in the running container) | A proper lexical engine costs **zero new dependencies**. `core` stays native-dep-free. |
+| **FTS5 with `bm25()` is available in the built-in `node:sqlite`** (SQLite 3.51.3, verified in the running container) | A proper lexical engine costs **zero new dependencies**. `core` stays native-dep-free. (The Postgres store, added later, mirrors the same tables as a stored `tsvector` ranked by `ts_rank_cd`; the ranking fixture passes on both.) |
 | `DatabaseSync` accepts `allowExtension: true` | `sqlite-vec` is *possible*, but needs a per-platform binary. §5 argues it is unnecessary. |
 | Corpus is **213 items / 947k chars ≈ 237k tokens** | A full re-embed costs **$0.0047** at `text-embedding-3-small` rates. Cost is not a design constraint. |
 | ~789 chunks × 768 dims × float32 = **2.3 MB**, 0.61M multiply-adds per query | Brute-force cosine in JS is ~1 ms. **No vector database is warranted.** |

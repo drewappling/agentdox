@@ -38,7 +38,7 @@ const GROUP_MSG = (scope: string, role: Role) => `forbidden: no ${role} access t
  */
 export function createMcpServer(dox: AgentDox, principal: Principal | null): McpServer {
   const server = new McpServer(
-    { name: 'agentdox', version: '0.1.0' },
+    { name: 'agentdox', version: '0.2.0' },
     { capabilities: { tools: {} } },
   );
 
@@ -58,9 +58,9 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       },
     },
     async ({ slug, name, description }) => {
-      const existing = dox.projects.get(slug);
+      const existing = await dox.projects.get(slug);
       if (existing && !can(principal, existing.slug, 'read')) return deny(GROUP_MSG(slug, 'read'));
-      const project = dox.projects.ensure({ slug, name, description, ownerSub: principal?.sub });
+      const project = await dox.projects.ensure({ slug, name, description, ownerSub: principal?.sub });
       return ok(`Project ${project.slug} (${project.name})`, project);
     },
   );
@@ -73,7 +73,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       inputSchema: {},
     },
     async () => {
-      const all = dox.projects.list();
+      const all = await dox.projects.list();
       const projects = principal
         ? all.filter((p) => can(principal, p.slug, 'read') || p.ownerSub === principal.sub)
         : all;
@@ -98,7 +98,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     async ({ content, category, target, importance, tags }) => {
       const scope = category ?? '';
       if (!can(principal, scope, 'write')) return deny(GROUP_MSG(scope, 'write'));
-      const entry = dox.memory.create({ content, category, target, importance: importance ?? 0.5, tags: tags ?? [] });
+      const entry = await dox.memory.create({ content, category, target, importance: importance ?? 0.5, tags: tags ?? [] });
       return ok(`Stored memory ${entry.id}`, entry);
     },
   );
@@ -134,7 +134,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     },
     async ({ category, target, limit }) => {
       if (category && !can(principal, category, 'read')) return deny(GROUP_MSG(category, 'read'));
-      const entries = dox.memory.list({ category, target, limit }).filter((e) => can(principal, e.category ?? '', 'read'));
+      const entries = (await dox.memory.list({ category, target, limit })).filter((e) => can(principal, e.category ?? '', 'read'));
       return ok(entries.map((e) => `[${e.importance}] ${e.content}`).join('\n') || '(no memory)', entries);
     },
   );
@@ -147,10 +147,10 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       inputSchema: { id: z.string() },
     },
     async ({ id }) => {
-      const entry = dox.memory.get(id);
+      const entry = await dox.memory.get(id);
       if (!entry) return ok('Not found: ' + id);
       if (!can(principal, entry.category ?? '', 'admin')) return deny(GROUP_MSG(entry.category ?? '', 'admin'));
-      dox.memory.remove(id);
+      await dox.memory.remove(id);
       return ok(`Removed ${id}`);
     },
   );
@@ -171,10 +171,10 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     },
     async (patch) => {
       const { id, tags, ...rest } = patch;
-      const existing = dox.memory.get(id);
+      const existing = await dox.memory.get(id);
       if (!existing) return { isError: true, content: [block(`Not found: ${id}`)] };
       if (!can(principal, existing.category ?? '', 'write')) return deny(GROUP_MSG(existing.category ?? '', 'write'));
-      const entry = dox.memory.update(id, { ...rest, ...(tags !== undefined ? { tags } : {}) });
+      const entry = await dox.memory.update(id, { ...rest, ...(tags !== undefined ? { tags } : {}) });
       return ok(`Updated ${id}`, entry);
     },
   );
@@ -196,7 +196,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     async ({ slug, title, content, scope, tags }) => {
       const sc = scope ?? '';
       if (!can(principal, sc, 'write')) return deny(GROUP_MSG(sc, 'write'));
-      const doc = dox.docs.create({ slug, title, content, scope, tags: tags ?? [] });
+      const doc = await dox.docs.create({ slug, title, content, scope, tags: tags ?? [] });
       return ok(`Created doc ${doc.id} (v${doc.version})`, doc);
     },
   );
@@ -209,7 +209,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       inputSchema: { id: z.string().optional(), slug: z.string().optional(), scope: z.string().optional() },
     },
     async ({ id, slug, scope }) => {
-      const doc = id ? dox.docs.get(id) : slug ? dox.docs.getBySlug(slug, scope) : null;
+      const doc = id ? await dox.docs.get(id) : slug ? await dox.docs.getBySlug(slug, scope) : null;
       if (!doc) return { isError: true, content: [block('doc not found')] };
       if (!can(principal, doc.scope ?? '', 'read')) return deny(GROUP_MSG(doc.scope ?? '', 'read'));
       return ok(`# ${doc.title} (v${doc.version})\n\n${doc.content}`, doc);
@@ -246,10 +246,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       if (scope && !can(principal, scope, 'read')) return deny(GROUP_MSG(scope, 'read'));
       const hits = await dox.docs.searchChunks(query, { scope, limit: limit ?? 8 });
       // Chunks carry their doc's scope, so an unscoped query still filters per-hit.
-      const readable = hits.filter((h) => {
-        const doc = dox.docs.get(h.docId);
-        return can(principal, doc?.scope ?? '', 'read');
-      });
+      const readable = hits.filter((h) => can(principal, h.scope ?? '', 'read'));
       const text = readable.length
         ? readable
             .map((h) => `### ${h.title} — ${h.slug}${h.heading ? ` § ${h.heading}` : ''}\n${h.content}`)
@@ -267,10 +264,10 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
       inputSchema: { id: z.string(), title: z.string().optional(), content: z.string().optional(), tags: z.array(z.string()).optional() },
     },
     async ({ id, title, content, tags }) => {
-      const existing = dox.docs.get(id);
+      const existing = await dox.docs.get(id);
       if (!existing) return { isError: true, content: [block(`Not found: ${id}`)] };
       if (!can(principal, existing.scope ?? '', 'write')) return deny(GROUP_MSG(existing.scope ?? '', 'write'));
-      const doc = dox.docs.update(id, { title, content, tags });
+      const doc = await dox.docs.update(id, { title, content, tags });
       return ok(`Updated ${id} → v${doc?.version}`, doc);
     },
   );
@@ -286,7 +283,7 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     },
     async ({ scope }) => {
       if (scope && !can(principal, scope, 'read')) return deny(GROUP_MSG(scope, 'read'));
-      const stats = dox.index.stats(scope);
+      const stats = await dox.index.stats(scope);
       const line = (label: string, x: { total: number; embedded: number }) =>
         `${label}: ${x.total} indexed, ${x.embedded} embedded`;
       const provider = stats.provider ? `${stats.provider} (${stats.model})` : 'none — lexical-only';
@@ -308,7 +305,7 @@ embeddings: ${provider}`, stats);
       // Rebuilding is global (it re-chunks every doc), so an unscoped call needs wildcard admin.
       const required = scope ?? '*';
       if (!can(principal, required, 'admin')) return deny(GROUP_MSG(required, 'admin'));
-      const lexical = dox.index.rebuildLexical();
+      const lexical = await dox.index.rebuildLexical();
       const embedded = embed === false ? null : await dox.index.backfillEmbeddings({ scope });
       return ok(
         `Rebuilt ${lexical.memory} memory + ${lexical.chunks} passages` +
@@ -328,7 +325,7 @@ embeddings: ${provider}`, stats);
     },
     async ({ scope, title }) => {
       if (!can(principal, scope, 'write')) return deny(GROUP_MSG(scope, 'write'));
-      const s = dox.sessions.create({ scope, title });
+      const s = await dox.sessions.create({ scope, title });
       return ok(`Session ${s.id}`, s);
     },
   );
@@ -341,10 +338,10 @@ embeddings: ${provider}`, stats);
       inputSchema: { session_id: z.string(), role: z.enum(['user', 'assistant', 'system', 'tool']), content: z.string() },
     },
     async ({ session_id, role, content }) => {
-      const s = dox.sessions.get(session_id);
+      const s = await dox.sessions.get(session_id);
       if (!s) return { isError: true, content: [block(`Session not found: ${session_id}`)] };
       if (!can(principal, s.scope, 'write')) return deny(GROUP_MSG(s.scope, 'write'));
-      const msg = dox.sessions.append(session_id, { role, content });
+      const msg = await dox.sessions.append(session_id, { role, content });
       return ok(`Appended ${role} message`, msg);
     },
   );
@@ -394,7 +391,7 @@ embeddings: ${provider}`, stats);
     },
     async ({ scope }) => {
       if (!can(principal, scope, 'read')) return deny(GROUP_MSG(scope, 'read'));
-      const brief = dox.context.getBrief(scope);
+      const brief = await dox.context.getBrief(scope);
       if (!brief) {
         return ok(
           `No historic brief yet for '${scope}'. Run context_brief_seed to build one from current memory/docs, ` +
@@ -445,7 +442,7 @@ embeddings: ${provider}`, stats);
     async ({ scope, title, decision, rationale }) => {
       if (!can(principal, scope, 'write')) return deny(GROUP_MSG(scope, 'write'));
       if (!title || !decision) return { isError: true, content: [block('title and decision are required')] };
-      const brief = dox.context.addDecision(scope, { title, decision, rationale });
+      const brief = await dox.context.addDecision(scope, { title, decision, rationale });
       return ok(`Recorded decision in '${scope}' (${brief.decisionLog.length} total)`, { decisionCount: brief.decisionLog.length });
     },
   );
@@ -459,7 +456,7 @@ embeddings: ${provider}`, stats);
     },
     async ({ scope }) => {
       if (!can(principal, scope, 'write')) return deny(GROUP_MSG(scope, 'write'));
-      const brief = dox.context.seedBrief(scope);
+      const brief = await dox.context.seedBrief(scope);
       return ok(`Seeded brief for '${scope}' from current memory/docs`, { decisionCount: brief.decisionLog.length });
     },
   );

@@ -1,5 +1,6 @@
 /**
- * Hybrid retrieval: BM25 over FTS5, cosine over stored vectors, fused with reciprocal rank.
+ * Hybrid retrieval: ranked full-text search (BM25 over FTS5 on SQLite, ts_rank_cd over a
+ * tsvector on Postgres), cosine over stored vectors, fused with reciprocal rank.
  *
  * Why this shape (measured in docs/architecture/rag.md):
  * - The old scorer was raw term frequency with no IDF or length normalisation, giving
@@ -12,7 +13,7 @@
  * - Fusion is RRF rather than score blending: BM25 scores and cosine similarities live on
  *   different scales, and normalising them would need re-tuning per corpus.
  */
-import type { DatabaseSync } from 'node:sqlite';
+import type { Param, Store } from './db.js';
 import { blobToVector, dot } from './embeddings.js';
 
 /** One retrieved row, before fusion. */
@@ -49,7 +50,7 @@ export function queryTerms(query: string): string[] {
 }
 
 /**
- * Any-term matching, ranked by BM25.
+ * Any-term matching, ranked.
  *
  * An earlier revision required *all* terms (AND) and fell back to OR only when that returned
  * nothing, on the theory that OR would reproduce the old length bias. Measured over ten queries
@@ -59,7 +60,8 @@ export function queryTerms(query: string): string[] {
  * length normalisation already solve the problem AND was defending against.
  *
  * Quoting each term also makes a dotted identifier (`OrderService.submit`) a phrase query, so
- * it still matches text the tokenizer split on punctuation.
+ * it still matches text the tokenizer split on punctuation. Postgres's websearch_to_tsquery
+ * reads the same `"a" OR "b"` string, so one builder serves both engines.
  */
 export function buildMatchQuery(query: string): string | null {
   const terms = queryTerms(query);
@@ -67,26 +69,20 @@ export function buildMatchQuery(query: string): string | null {
   return terms.map(quote).join(' OR ');
 }
 
-/**
- * BM25 over an FTS5 table. SQLite returns bm25() as a negative number where more negative is a
- * better match, so it is negated here — every score in this module is "higher is better".
- */
-export function lexicalSearch(
-  db: DatabaseSync,
+/** Ranked full-text search over one index table; every score here is "higher is better". */
+export async function lexicalSearch(
+  store: Store,
   table: 'memory_fts' | 'chunk_fts' | 'message_fts',
   query: string,
   opts: { scope?: string; limit?: number } = {},
-): Ranked[] {
+): Promise<Ranked[]> {
   const match = buildMatchQuery(query);
   if (!match) return [];
   const limit = opts.limit ?? 20;
-  const where = opts.scope ? `${table} MATCH ? AND scope = ?` : `${table} MATCH ?`;
-  const args: (string | number)[] = opts.scope ? [match, opts.scope, limit] : [match, limit];
+  const args: Param[] = opts.scope ? [match, opts.scope, limit] : [match, limit];
   try {
-    const rows = db
-      .prepare(`SELECT id, bm25(${table}) AS rank FROM ${table} WHERE ${where} ORDER BY rank LIMIT ?`)
-      .all(...args) as { id: string; rank: number }[];
-    return rows.map((r) => ({ id: r.id, score: -r.rank }));
+    const rows = await store.all<{ id: string; score: number }>(store.sql.ftsSearch(table, opts.scope !== undefined), args);
+    return rows.map((r) => ({ id: String(r.id), score: Number(r.score) }));
   } catch (err) {
     // A malformed MATCH is an expected no-op (the lexical arm just contributes nothing). Anything
     // else — a locked db, a corrupt FTS table — is a real fault that should be visible, not hidden.
@@ -105,15 +101,15 @@ export function lexicalSearch(
  * multiply-adds per query. A vector database here would be an operational dependency bought
  * for a workload that fits in cache. Revisit above ~100k rows per scope.
  */
-export function vectorSearch(
-  db: DatabaseSync,
+export async function vectorSearch(
+  store: Store,
   kind: 'memory' | 'chunk' | 'message',
   queryVec: Float32Array,
   opts: { scope?: string; limit?: number; model?: string } = {},
-): Ranked[] {
+): Promise<Ranked[]> {
   const limit = opts.limit ?? 20;
   const clauses = ['owner_kind = ?'];
-  const args: (string | number | null)[] = [kind];
+  const args: Param[] = [kind];
   if (opts.scope) {
     clauses.push('scope = ?');
     args.push(opts.scope);
@@ -122,9 +118,10 @@ export function vectorSearch(
     clauses.push('model = ?');
     args.push(opts.model);
   }
-  const rows = db
-    .prepare(`SELECT owner_id, vec FROM embeddings WHERE ${clauses.join(' AND ')}`)
-    .all(...args) as { owner_id: string; vec: Uint8Array }[];
+  const rows = await store.all<{ owner_id: string; vec: Uint8Array }>(
+    `SELECT owner_id, vec FROM embeddings WHERE ${clauses.join(' AND ')}`,
+    args,
+  );
 
   const scored: Ranked[] = [];
   for (const row of rows) {

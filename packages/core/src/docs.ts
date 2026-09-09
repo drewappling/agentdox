@@ -1,5 +1,5 @@
 import type { Doc, DocVersion } from '@agentdox/types';
-import type { Store } from './db.js';
+import type { Param, Store } from './db.js';
 import { newId, nowIso, parseJsonArray, relevanceScore } from './util.js';
 import type { IndexService } from './indexer.js';
 import { fuseRRF, lexicalSearch, vectorSearch } from './retrieval.js';
@@ -42,6 +42,20 @@ type Row = {
   scope: string | null;
 };
 
+const CHUNK_COLUMNS = 'id, doc_id, scope, slug, title, heading, ordinal, content';
+
+const toChunk = (c: ChunkRow, score: number): ChunkHit => ({
+  id: c.id,
+  docId: c.doc_id,
+  scope: c.scope ?? undefined,
+  slug: c.slug,
+  title: c.title,
+  heading: c.heading,
+  ordinal: Number(c.ordinal),
+  content: c.content,
+  score,
+});
+
 export interface DocFilter {
   scope?: string;
   tag?: string;
@@ -65,14 +79,14 @@ export class DocService {
       title: row.title,
       content: row.content,
       tags: parseJsonArray<string>(row.tags_json),
-      version: row.version,
+      version: Number(row.version),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       scope: row.scope ?? undefined,
     };
   }
 
-  create(input: { slug: string; title: string; content: string; tags?: string[]; scope?: string; id?: string }): Doc {
+  async create(input: { slug: string; title: string; content: string; tags?: string[]; scope?: string; id?: string }): Promise<Doc> {
     const now = nowIso();
     const doc: Doc = {
       id: input.id ?? newId('doc'),
@@ -85,46 +99,39 @@ export class DocService {
       updatedAt: now,
       scope: input.scope,
     };
-    this.store.tx(() => {
-      this.store.db
-        .prepare(
-          `INSERT INTO docs (id, slug, title, content, tags_json, version, created_at, updated_at, scope)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          doc.id,
-          doc.slug,
-          doc.title,
-          doc.content,
-          JSON.stringify(doc.tags),
-          doc.version,
-          doc.createdAt,
-          doc.updatedAt,
-          doc.scope ?? null,
-        );
-      this.store.db
-        .prepare(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`)
-        .run(doc.id, doc.version, doc.content, doc.updatedAt);
-      this.indexer?.indexDoc(doc);
+    await this.store.tx(async () => {
+      await this.store.run(
+        `INSERT INTO docs (id, slug, title, content, tags_json, version, created_at, updated_at, scope)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [doc.id, doc.slug, doc.title, doc.content, JSON.stringify(doc.tags), doc.version, doc.createdAt, doc.updatedAt, doc.scope ?? null],
+      );
+      await this.store.run(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`, [
+        doc.id,
+        doc.version,
+        doc.content,
+        doc.updatedAt,
+      ]);
+      await this.indexer?.indexDoc(doc);
     });
     return doc;
   }
 
-  get(id: string): Doc | null {
-    const row = this.store.db.prepare('SELECT * FROM docs WHERE id = ?').get(id) as Row | undefined;
+  async get(id: string): Promise<Doc | null> {
+    const row = await this.store.get<Row>('SELECT * FROM docs WHERE id = ?', [id]);
     return row ? this.toDoc(row) : null;
   }
 
-  getBySlug(slug: string, scope?: string): Doc | null {
-    const row = (scope === undefined
-      ? this.store.db.prepare('SELECT * FROM docs WHERE slug = ? ORDER BY updated_at DESC LIMIT 1').get(slug)
-      : this.store.db.prepare('SELECT * FROM docs WHERE slug = ? AND scope IS ?').get(slug, scope)) as Row | undefined;
+  async getBySlug(slug: string, scope?: string): Promise<Doc | null> {
+    const row =
+      scope === undefined
+        ? await this.store.get<Row>('SELECT * FROM docs WHERE slug = ? ORDER BY updated_at DESC LIMIT 1', [slug])
+        : await this.store.get<Row>(`SELECT * FROM docs WHERE slug = ? AND ${this.store.sql.nullEq('scope')}`, [slug, scope]);
     return row ? this.toDoc(row) : null;
   }
 
   /** Save a new revision: bumps version and snapshots the previous content. */
-  update(id: string, patch: Partial<Pick<Doc, 'title' | 'content' | 'tags' | 'scope' | 'slug'>>): Doc | null {
-    const existing = this.get(id);
+  async update(id: string, patch: Partial<Pick<Doc, 'title' | 'content' | 'tags' | 'scope' | 'slug'>>): Promise<Doc | null> {
+    const existing = await this.get(id);
     if (!existing) return null;
     const next: Doc = {
       ...existing,
@@ -134,49 +141,42 @@ export class DocService {
       updatedAt: nowIso(),
       createdAt: existing.createdAt,
     };
-    this.store.tx(() => {
-      this.store.db
-        .prepare(
-          `UPDATE docs SET slug = ?, title = ?, content = ?, tags_json = ?, version = ?, updated_at = ?, scope = ? WHERE id = ?`,
-        )
-        .run(
-          next.slug,
-          next.title,
-          next.content,
-          JSON.stringify(next.tags),
-          next.version,
-          next.updatedAt,
-          next.scope ?? null,
-          next.id,
-        );
-      this.store.db
-        .prepare(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`)
-        .run(next.id, next.version, next.content, next.updatedAt);
-      this.indexer?.indexDoc(next);
+    await this.store.tx(async () => {
+      await this.store.run(
+        `UPDATE docs SET slug = ?, title = ?, content = ?, tags_json = ?, version = ?, updated_at = ?, scope = ? WHERE id = ?`,
+        [next.slug, next.title, next.content, JSON.stringify(next.tags), next.version, next.updatedAt, next.scope ?? null, next.id],
+      );
+      await this.store.run(`INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)`, [
+        next.id,
+        next.version,
+        next.content,
+        next.updatedAt,
+      ]);
+      await this.indexer?.indexDoc(next);
     });
     return this.get(id);
   }
 
-  remove(id: string): boolean {
-    this.indexer?.removeDoc(id);
-    const res = this.store.db.prepare('DELETE FROM docs WHERE id = ?').run(id);
+  async remove(id: string): Promise<boolean> {
+    await this.indexer?.removeDoc(id);
+    const res = await this.store.run('DELETE FROM docs WHERE id = ?', [id]);
     return res.changes > 0;
   }
 
-  list(filter: DocFilter = {}): Doc[] {
+  async list(filter: DocFilter = {}): Promise<Doc[]> {
     const clauses: string[] = [];
-    const args: (string | number | null)[] = [];
+    const args: Param[] = [];
     if (filter.scope) {
       clauses.push('scope = ?');
       args.push(filter.scope);
     }
     if (filter.tag) {
-      clauses.push('EXISTS (SELECT 1 FROM json_each(tags_json) WHERE json_each.value = ?)');
+      clauses.push(this.store.sql.jsonArrayHas('tags_json'));
       args.push(filter.tag);
     }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const limit = filter.limit ?? 100;
-    const rows = this.store.db.prepare(`SELECT * FROM docs ${where} ORDER BY updated_at DESC LIMIT ?`).all(...args, limit) as Row[];
+    const rows = await this.store.all<Row>(`SELECT * FROM docs ${where} ORDER BY updated_at DESC LIMIT ?`, [...args, limit]);
     return rows.map((r) => this.toDoc(r));
   }
 
@@ -188,7 +188,7 @@ export class DocService {
   async searchChunks(query: string, filter: DocFilter = {}): Promise<ChunkHit[]> {
     const limit = filter.limit ?? 10;
     const pool = limit * 4;
-    const lists = [lexicalSearch(this.store.db, 'chunk_fts', query, { scope: filter.scope, limit: pool })];
+    const lists = [await lexicalSearch(this.store, 'chunk_fts', query, { scope: filter.scope, limit: pool })];
 
     const provider = this.indexer?.embeddingProvider;
     if (provider) {
@@ -196,7 +196,7 @@ export class DocService {
         const [queryVec] = await provider.embed([query], 'query');
         if (queryVec) {
           lists.push(
-            vectorSearch(this.store.db, 'chunk', queryVec, {
+            await vectorSearch(this.store, 'chunk', queryVec, {
               scope: filter.scope,
               limit: pool,
               model: provider.model,
@@ -211,24 +211,11 @@ export class DocService {
     const fused = fuseRRF(lists.filter((l) => l.length));
     if (!fused.length) return [];
 
-    const byId = this.store.db.prepare(
-      'SELECT id, doc_id, scope, slug, title, heading, ordinal, content FROM doc_chunks WHERE id = ?',
-    );
     const hits: ChunkHit[] = [];
     for (const row of fused.slice(0, limit)) {
-      const c = byId.get(row.id) as ChunkRow | undefined;
+      const c = await this.store.get<ChunkRow>(`SELECT ${CHUNK_COLUMNS} FROM doc_chunks WHERE id = ?`, [row.id]);
       if (!c) continue;
-      hits.push({
-        id: c.id,
-        docId: c.doc_id,
-        scope: c.scope ?? undefined,
-        slug: c.slug,
-        title: c.title,
-        heading: c.heading,
-        ordinal: c.ordinal,
-        content: c.content,
-        score: row.score,
-      });
+      hits.push(toChunk(c, row.score));
     }
     return hits;
   }
@@ -245,7 +232,7 @@ export class DocService {
     for (const chunk of chunks) {
       if (seen.has(chunk.docId)) continue;
       seen.add(chunk.docId);
-      const doc = this.get(chunk.docId);
+      const doc = await this.get(chunk.docId);
       if (doc) docs.push(doc);
       if (docs.length >= limit) break;
     }
@@ -254,9 +241,9 @@ export class DocService {
   }
 
   /** Pre-chunking scorer, retained for stores whose index has not been built yet. */
-  private legacySearch(query: string, filter: DocFilter = {}): Doc[] {
+  private async legacySearch(query: string, filter: DocFilter = {}): Promise<Doc[]> {
     const rel = relevanceScore;
-    return this.list({ ...filter, limit: 500 })
+    return (await this.list({ ...filter, limit: 500 }))
       .map((doc) => ({ doc, score: rel(query, doc.title, doc.content, doc.slug, doc.tags.join(' ')) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)
@@ -265,20 +252,16 @@ export class DocService {
   }
 
   /** Every chunk of one document, in reading order. */
-  chunksFor(docId: string): ChunkHit[] {
-    const rows = this.store.db
-      .prepare('SELECT id, doc_id, scope, slug, title, heading, ordinal, content FROM doc_chunks WHERE doc_id = ? ORDER BY ordinal')
-      .all(docId) as ChunkRow[];
-    return rows.map((c) => ({
-      id: c.id, docId: c.doc_id, scope: c.scope ?? undefined, slug: c.slug, title: c.title,
-      heading: c.heading, ordinal: c.ordinal, content: c.content, score: 0,
-    }));
+  async chunksFor(docId: string): Promise<ChunkHit[]> {
+    const rows = await this.store.all<ChunkRow>(`SELECT ${CHUNK_COLUMNS} FROM doc_chunks WHERE doc_id = ? ORDER BY ordinal`, [docId]);
+    return rows.map((c) => toChunk(c, 0));
   }
 
-  history(id: string): DocVersion[] {
-    const rows = this.store.db
-      .prepare('SELECT version, content, updated_at FROM doc_versions WHERE doc_id = ? ORDER BY version DESC')
-      .all(id) as { version: number; content: string; updated_at: string }[];
-    return rows.map((r) => ({ version: r.version, content: r.content, updatedAt: r.updated_at }));
+  async history(id: string): Promise<DocVersion[]> {
+    const rows = await this.store.all<{ version: number; content: string; updated_at: string }>(
+      'SELECT version, content, updated_at FROM doc_versions WHERE doc_id = ? ORDER BY version DESC',
+      [id],
+    );
+    return rows.map((r) => ({ version: Number(r.version), content: r.content, updatedAt: r.updated_at }));
   }
 }

@@ -97,7 +97,7 @@ export class ContextService {
       });
       if (hits.length < memoryLimit) {
         const seen = new Set(hits.map((h) => h.entry.id));
-        for (const entry of this.deps.memory.list({ category: scope, limit: memoryLimit * 3 })) {
+        for (const entry of await this.deps.memory.list({ category: scope, limit: memoryLimit * 3 })) {
           if (seen.has(entry.id)) continue;
           if (entry.importance >= minImportance) {
             hits.push({ entry, score: entry.importance });
@@ -108,9 +108,7 @@ export class ContextService {
       }
       memory = hits;
     } else {
-      memory = this.deps.memory
-        .list({ category: scope, limit: memoryLimit })
-        .map((entry) => ({ entry, score: entry.importance }));
+      memory = (await this.deps.memory.list({ category: scope, limit: memoryLimit })).map((entry) => ({ entry, score: entry.importance }));
     }
     memory = memory.slice(0, memoryLimit);
 
@@ -125,11 +123,11 @@ export class ContextService {
       for (const p of passages) {
         if (seenDocs.has(p.docId)) continue;
         seenDocs.add(p.docId);
-        const doc = this.deps.docs.get(p.docId);
+        const doc = await this.deps.docs.get(p.docId);
         if (doc) docs.push(doc);
       }
     }
-    if (!passages.length) docs = this.deps.docs.list({ scope, limit: docsLimit });
+    if (!passages.length) docs = await this.deps.docs.list({ scope, limit: docsLimit });
 
     // --- Sessions: recency for continuity, relevance for recall. ---
     // Pure recency (the original behaviour) meant anything discussed more than `sessionLimit`
@@ -138,7 +136,7 @@ export class ContextService {
     // whether or not they match. So the budget is split: the newest RECENCY_SHARE of it is the
     // tail of the conversation, and the remainder is filled with relevant older messages.
     const recentCount = query ? Math.max(1, Math.ceil(sessionLimit * RECENCY_SHARE)) : sessionLimit;
-    const recent = this.deps.sessions.recentMessages(scope, recentCount);
+    const recent = await this.deps.sessions.recentMessages(scope, recentCount);
     let sessionMessages = recent;
     if (query && sessionLimit > recentCount) {
       const exclude = new Set(recent.map((m) => m.id).filter((id): id is number => id !== undefined));
@@ -152,7 +150,7 @@ export class ContextService {
 
     // --- Brief: query-independent, so it renders FIRST and caches well. ---
     const briefBudget = request.briefChars ?? 0;
-    const briefBlock = briefBudget > 0 ? this.renderBrief(scope, briefBudget) : '';
+    const briefBlock = briefBudget > 0 ? await this.renderBrief(scope, briefBudget) : '';
 
     const prompt = this.render({ request, memory, docs, passages, sessionMessages, briefBlock });
     return {
@@ -181,49 +179,47 @@ export class ContextService {
       sessionMsgs: s.sessionMessages.length,
       assembledAt: new Date().toISOString(),
     };
-    this.deps.store.db
-      .prepare(
-        `INSERT INTO context_snapshots (id, scope, query, prompt, chars, memory_hits, docs_count, session_msgs, assembled_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(scope) DO UPDATE SET
-           query=excluded.query, prompt=excluded.prompt, chars=excluded.chars,
-           memory_hits=excluded.memory_hits, docs_count=excluded.docs_count,
-           session_msgs=excluded.session_msgs, assembled_at=excluded.assembled_at`,
-      )
-      .run(newId('snap'), scope, query, snap.prompt, snap.chars, snap.memoryHits, snap.docs, snap.sessionMsgs, snap.assembledAt);
+    await this.deps.store.run(
+      `INSERT INTO context_snapshots (id, scope, query, prompt, chars, memory_hits, docs_count, session_msgs, assembled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(scope) DO UPDATE SET
+         query=excluded.query, prompt=excluded.prompt, chars=excluded.chars,
+         memory_hits=excluded.memory_hits, docs_count=excluded.docs_count,
+         session_msgs=excluded.session_msgs, assembled_at=excluded.assembled_at`,
+      [newId('snap'), scope, query, snap.prompt, snap.chars, snap.memoryHits, snap.docs, snap.sessionMsgs, snap.assembledAt],
+    );
     return snap;
   }
 
   /** Read the latest persisted context snapshot for a scope, or null. */
-  getSnapshot(scope: string): ContextSnapshot | null {
-    const r = this.deps.store.db
-      .prepare('SELECT scope, query, prompt, chars, memory_hits, docs_count, session_msgs, assembled_at FROM context_snapshots WHERE scope = ?')
-      .get(scope) as Record<string, unknown> | undefined;
+  async getSnapshot(scope: string): Promise<ContextSnapshot | null> {
+    const r = await this.deps.store.get<Record<string, unknown>>(
+      'SELECT scope, query, prompt, chars, memory_hits, docs_count, session_msgs, assembled_at FROM context_snapshots WHERE scope = ?',
+      [scope],
+    );
     if (!r) return null;
     return {
       scope: r.scope as string,
       query: r.query as string,
       prompt: r.prompt as string,
-      chars: r.chars as number,
-      memoryHits: r.memory_hits as number,
-      docs: r.docs_count as number,
-      sessionMsgs: r.session_msgs as number,
+      chars: Number(r.chars),
+      memoryHits: Number(r.memory_hits),
+      docs: Number(r.docs_count),
+      sessionMsgs: Number(r.session_msgs),
       assembledAt: r.assembled_at as string,
     };
   }
 
   /** Distinct scopes that hold any context-bearing data or a project row (scheduler targets). */
-  targetScopes(): string[] {
-    const rows = this.deps.store.db
-      .prepare(
-        `SELECT scope FROM (
-           SELECT DISTINCT category AS scope FROM memory
-           UNION SELECT DISTINCT scope FROM docs
-           UNION SELECT DISTINCT scope FROM sessions
-           UNION SELECT DISTINCT slug AS scope FROM projects
-         ) WHERE scope IS NOT NULL AND scope != ''`,
-      )
-      .all() as { scope: string }[];
+  async targetScopes(): Promise<string[]> {
+    const rows = await this.deps.store.all<{ scope: string }>(
+      `SELECT scope FROM (
+         SELECT DISTINCT category AS scope FROM memory
+         UNION SELECT DISTINCT scope FROM docs
+         UNION SELECT DISTINCT scope FROM sessions
+         UNION SELECT DISTINCT slug AS scope FROM projects
+       ) AS scopes WHERE scope IS NOT NULL AND scope != ''`,
+    );
     return rows.map((r) => r.scope);
   }
 
@@ -246,8 +242,8 @@ export class ContextService {
     };
   }
 
-  getBrief(scope: string): ProjectBrief | null {
-    const r = this.deps.store.db.prepare('SELECT brief_json FROM context_briefs WHERE scope = ?').get(scope) as { brief_json: string } | undefined;
+  async getBrief(scope: string): Promise<ProjectBrief | null> {
+    const r = await this.deps.store.get<{ brief_json: string }>('SELECT brief_json FROM context_briefs WHERE scope = ?', [scope]);
     if (!r) return null;
     try {
       const b = JSON.parse(r.brief_json) as ProjectBrief;
@@ -259,8 +255,8 @@ export class ContextService {
   }
 
   /** Write the full brief (sections are replaced; the decision log is preserved unless provided). */
-  saveBrief(scope: string, partial: Partial<ProjectBrief>): ProjectBrief {
-    const prev = this.getBrief(scope) ?? this.emptyBrief(scope);
+  async saveBrief(scope: string, partial: Partial<ProjectBrief>): Promise<ProjectBrief> {
+    const prev = (await this.getBrief(scope)) ?? this.emptyBrief(scope);
     const brief: ProjectBrief = {
       scope,
       overview: partial.overview ?? prev.overview,
@@ -272,13 +268,13 @@ export class ContextService {
       decisionLog: Array.isArray(partial.decisionLog) ? partial.decisionLog : prev.decisionLog,
       updatedAt: new Date().toISOString(),
     };
-    this.persistBrief(brief);
+    await this.persistBrief(brief);
     return brief;
   }
 
   /** Append a decision/convention to the brief's historic log. */
-  addDecision(scope: string, input: { title: string; decision: string; rationale?: string }): ProjectBrief {
-    const prev = this.getBrief(scope) ?? this.emptyBrief(scope);
+  async addDecision(scope: string, input: { title: string; decision: string; rationale?: string }): Promise<ProjectBrief> {
+    const prev = (await this.getBrief(scope)) ?? this.emptyBrief(scope);
     prev.decisionLog = prev.decisionLog ?? [];
     prev.decisionLog.push({
       id: newId('dec'),
@@ -288,15 +284,15 @@ export class ContextService {
       at: new Date().toISOString(),
     });
     prev.updatedAt = nowIso();
-    this.persistBrief(prev);
+    await this.persistBrief(prev);
     return prev;
   }
 
   /** Build a starter brief from the project's current top memory + docs (used for first-time seeding). */
-  seedBrief(scope: string): ProjectBrief {
-    const prev = this.getBrief(scope) ?? this.emptyBrief(scope);
-    const topMem = this.deps.memory.list({ category: scope, limit: 12 });
-    const topDocs = this.deps.docs.list({ scope, limit: 8 });
+  async seedBrief(scope: string): Promise<ProjectBrief> {
+    const prev = (await this.getBrief(scope)) ?? this.emptyBrief(scope);
+    const topMem = await this.deps.memory.list({ category: scope, limit: 12 });
+    const topDocs = await this.deps.docs.list({ scope, limit: 8 });
     const brief: ProjectBrief = {
       ...prev,
       scope,
@@ -312,14 +308,15 @@ export class ContextService {
     if (!prev.codeStyle && topMem.length) {
       brief.codeStyle = topMem.slice(0, 6).map((m) => `- ${m.content}`).join('\n');
     }
-    this.persistBrief(brief);
+    await this.persistBrief(brief);
     return brief;
   }
 
-  private persistBrief(brief: ProjectBrief): void {
-    this.deps.store.db
-      .prepare('INSERT INTO context_briefs (scope, brief_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(scope) DO UPDATE SET brief_json=excluded.brief_json, updated_at=excluded.updated_at')
-      .run(brief.scope, JSON.stringify(brief), brief.updatedAt);
+  private async persistBrief(brief: ProjectBrief): Promise<void> {
+    await this.deps.store.run(
+      'INSERT INTO context_briefs (scope, brief_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(scope) DO UPDATE SET brief_json=excluded.brief_json, updated_at=excluded.updated_at',
+      [brief.scope, JSON.stringify(brief), brief.updatedAt],
+    );
   }
 
   /**
@@ -333,8 +330,8 @@ export class ContextService {
    * a half-decision is worse than an absent one, and the next entry down may
    * fit. Empty scopes render nothing rather than a hollow scaffold.
    */
-  private renderBrief(scope: string, budgetChars: number): string {
-    const brief = this.getBrief(scope);
+  private async renderBrief(scope: string, budgetChars: number): Promise<string> {
+    const brief = await this.getBrief(scope);
     if (brief === null) return '';
 
     const section = (label: string, body: string): string => (body.trim() ? `## ${label}\n${body.trim()}\n` : '');

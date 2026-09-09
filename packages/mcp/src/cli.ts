@@ -10,11 +10,12 @@ import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dbPath = process.env.AGENTDOX_DB ?? resolve(here, '../../..', 'data', 'agentdox.db');
-mkdirSync(resolve(here, '../../..', 'data'), { recursive: true });
-const dox = new AgentDox(dbPath);
+// AGENTDOX_DATABASE_URL (Postgres) wins over AGENTDOX_DB (a SQLite file), like the server.
+const target = process.env.AGENTDOX_DATABASE_URL || process.env.AGENTDOX_DB || resolve(here, '../../..', 'data', 'agentdox.db');
+if (!AgentDox.isPostgres(target)) mkdirSync(dirname(target), { recursive: true });
+const dox = await AgentDox.open(target);
 
 const server = createMcpServer(dox, null); // stdio: local full access
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error('[agentdox-mcp] stdio server ready');
+console.error(`[agentdox-mcp] stdio server ready (${dox.storage})`);

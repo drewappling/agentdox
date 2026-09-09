@@ -32,18 +32,18 @@ const toProject = (r: Row): Project => ({
 export class ProjectService {
   constructor(private readonly store: Store) {}
 
-  list(): Project[] {
-    const rows = this.store.db.prepare('SELECT * FROM projects ORDER BY created_at DESC').all() as unknown as Row[];
+  async list(): Promise<Project[]> {
+    const rows = await this.store.all<Row>('SELECT * FROM projects ORDER BY created_at DESC');
     return rows.map(toProject);
   }
 
-  get(slug: string): Project | null {
-    const row = this.store.db.prepare('SELECT * FROM projects WHERE slug = ?').get(slug) as Row | undefined;
+  async get(slug: string): Promise<Project | null> {
+    const row = await this.store.get<Row>('SELECT * FROM projects WHERE slug = ?', [slug]);
     return row ? toProject(row) : null;
   }
 
-  getById(id: string): Project | null {
-    const row = this.store.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Row | undefined;
+  async getById(id: string): Promise<Project | null> {
+    const row = await this.store.get<Row>('SELECT * FROM projects WHERE id = ?', [id]);
     return row ? toProject(row) : null;
   }
 
@@ -55,35 +55,47 @@ export class ProjectService {
    * time is friction with nothing behind it. An existing project's name is never overwritten
    * here — renaming is a deliberate act, not a side effect of saying hello.
    */
-  ensure(input: NewProject): Project {
-    const existing = this.get(input.slug);
+  async ensure(input: NewProject): Promise<Project> {
+    const existing = await this.get(input.slug);
     if (existing) return existing;
     const id = newId('proj');
-    this.store.db
-      .prepare('INSERT INTO projects (id, slug, name, description, owner_sub, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, input.slug, input.name ?? input.slug, input.description ?? null, input.ownerSub ?? null, nowIso());
-    return this.get(input.slug) as Project;
+    // Two agents saying hello at once: the second insert loses on the unique slug and reads
+    // back what the first one made.
+    await this.store
+      .run('INSERT INTO projects (id, slug, name, description, owner_sub, created_at) VALUES (?, ?, ?, ?, ?, ?)', [
+        id,
+        input.slug,
+        input.name ?? input.slug,
+        input.description ?? null,
+        input.ownerSub ?? null,
+        nowIso(),
+      ])
+      .catch(async (e: unknown) => {
+        if (await this.get(input.slug)) return;
+        throw e;
+      });
+    return (await this.get(input.slug)) as Project;
   }
 
   /**
    * Delete a project and all of its scoped data (memory, docs+versions, sessions+messages
    * keyed by that scope). Returns true if a project existed.
    */
-  remove(slug: string): boolean {
-    if (!this.get(slug)) return false;
+  async remove(slug: string): Promise<boolean> {
+    if (!(await this.get(slug))) return false;
     // One transaction so a crash can't leave a project half-deleted. Retrieval indexes are keyed
     // by scope, so drop them here too: the per-entity remove() methods that normally clean the
     // FTS/vector rows are bypassed by these bulk deletes.
-    this.store.tx(() => {
-      this.store.db.prepare('DELETE FROM memory WHERE category = ?').run(slug);
-      this.store.db.prepare('DELETE FROM docs WHERE scope = ?').run(slug); // cascades doc_versions
-      this.store.db.prepare('DELETE FROM sessions WHERE scope = ?').run(slug); // cascades messages
-      this.store.db.prepare('DELETE FROM doc_chunks WHERE scope = ?').run(slug);
-      this.store.db.prepare('DELETE FROM memory_fts WHERE scope = ?').run(slug);
-      this.store.db.prepare('DELETE FROM chunk_fts WHERE scope = ?').run(slug);
-      this.store.db.prepare('DELETE FROM message_fts WHERE scope = ?').run(slug);
-      this.store.db.prepare('DELETE FROM embeddings WHERE scope = ?').run(slug);
-      this.store.db.prepare('DELETE FROM projects WHERE slug = ?').run(slug);
+    await this.store.tx(async () => {
+      await this.store.run('DELETE FROM memory WHERE category = ?', [slug]);
+      await this.store.run('DELETE FROM docs WHERE scope = ?', [slug]); // cascades doc_versions
+      await this.store.run('DELETE FROM sessions WHERE scope = ?', [slug]); // cascades messages
+      await this.store.run('DELETE FROM doc_chunks WHERE scope = ?', [slug]);
+      await this.store.run('DELETE FROM memory_fts WHERE scope = ?', [slug]);
+      await this.store.run('DELETE FROM chunk_fts WHERE scope = ?', [slug]);
+      await this.store.run('DELETE FROM message_fts WHERE scope = ?', [slug]);
+      await this.store.run('DELETE FROM embeddings WHERE scope = ?', [slug]);
+      await this.store.run('DELETE FROM projects WHERE slug = ?', [slug]);
     });
     return true;
   }

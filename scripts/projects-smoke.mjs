@@ -1,7 +1,7 @@
 // Quick smoke of the projects API via Fastify inject (no listening socket).
 import { buildApp } from '@agentdox/server';
 
-const { app, dox } = buildApp({ authEnabled: false, dbPath: ':memory:' });
+const { app, dox } = await buildApp({ authEnabled: false, dbPath: ':memory:', databaseUrl: process.env.AGENTDOX_TEST_DATABASE_URL, logger: false });
 let pass = 0, fail = 0;
 const check = (n, cond) => { cond ? pass++ : fail++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${n}`); };
 
@@ -33,11 +33,17 @@ const ctx = r.json();
 check('assemble context for project scope -> has prompt', r.statusCode === 200 && typeof ctx.prompt === 'string');
 
 // 6. MCP path shares the same DB (direct core access)
-const mcpProject = dox.projects.ensure({ slug: 'hermes', name: 'Hermes' });
+const mcpProject = await dox.projects.ensure({ slug: 'hermes', name: 'Hermes' });
 check('core ProjectService ensure (MCP path) works', mcpProject.slug === 'hermes');
-check('core lists both projects', dox.projects.list().length >= 2);
+check('core lists both projects', (await dox.projects.list()).length >= 2);
+
+// 7. Removing a project takes its scoped data with it
+r = await app.inject({ method: 'DELETE', url: '/projects/acme' });
+check('delete project -> 200', r.statusCode === 200);
+r = await app.inject({ method: 'GET', url: '/memory?category=acme' });
+check('its memory is gone', Array.isArray(r.json()) && r.json().length === 0);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 await app.close();
-dox.close();
+await dox.close();
 process.exit(fail ? 1 : 0);

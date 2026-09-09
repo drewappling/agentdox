@@ -20,7 +20,13 @@ const principals = new WeakMap<FastifyRequest, Principal | null>();
 const principalOf = (req: FastifyRequest): Principal | null => principals.get(req) ?? null;
 
 export interface BuildOptions {
+  /** SQLite file. Ignored when `databaseUrl` (or AGENTDOX_DATABASE_URL) names a Postgres store. */
   dbPath?: string;
+  /**
+   * A `postgres://` URL: several instances share one store (tables under the schema named by
+   * AGENTDOX_PG_SCHEMA, default `agentdox`). Without it the store is the SQLite file.
+   */
+  databaseUrl?: string;
   env?: NodeJS.ProcessEnv;
   authEnabled?: boolean;
   /** Interface to bind; 0.0.0.0 by default. An embedding host binds 127.0.0.1. */
@@ -35,15 +41,16 @@ export interface BuildOptions {
   resolvePrincipal?: (req: FastifyRequest) => Principal | null | Promise<Principal | null>;
 }
 
-export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: AgentDox; auth: AuthContext } {
+export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyInstance; dox: AgentDox; auth: AuthContext }> {
   const env = opts.env ?? process.env;
+  // Account for env-injected settings (used by tests and embedding hosts) plus process env.
+  const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+  const databaseUrl = opts.databaseUrl ?? mergedEnv.AGENTDOX_DATABASE_URL;
   const dbPath = opts.dbPath ?? resolve(repoRoot, 'data', 'agentdox.db');
   // The default lives under the repo; a caller-chosen path is the caller's to create.
-  if (opts.dbPath === undefined) mkdirSync(resolve(repoRoot, 'data'), { recursive: true });
+  if (!databaseUrl && opts.dbPath === undefined) mkdirSync(resolve(repoRoot, 'data'), { recursive: true });
 
-  const dox = new AgentDox(dbPath);
-  // Account for env-injected auth flag (used by tests) plus process env.
-  const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+  const dox = await AgentDox.open(databaseUrl || dbPath, mergedEnv);
   const auth: AuthContext = {
     enabled: opts.authEnabled ?? mergedEnv.AGENTDOX_AUTH_ENABLED === 'true',
     chain: null,
@@ -56,8 +63,8 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
 
   // Admin bootstrap: seed a PAT from env so the first token can be minted out-of-band.
   const adminToken = mergedEnv.AGENTDOX_ADMIN_TOKEN;
-  if (auth.enabled && adminToken && !dox.pat.existsByRawToken(adminToken)) {
-    dox.pat.issue({ name: 'bootstrap-admin', grants: { '*': 'admin' }, rawToken: adminToken });
+  if (auth.enabled && adminToken && !(await dox.pat.existsByRawToken(adminToken))) {
+    await dox.pat.issue({ name: 'bootstrap-admin', grants: { '*': 'admin' }, rawToken: adminToken });
   }
 
   const app = Fastify({ logger: opts.logger ?? true });
@@ -91,7 +98,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     }
   });
 
-  app.get('/health', async () => ({ ok: true, service: 'agentdox', auth: auth.enabled, db: true }));
+  app.get('/health', async () => ({ ok: true, service: 'agentdox', auth: auth.enabled, db: true, storage: dox.store.dialect }));
 
   // ---- PAT management (requires wildcard admin) ----
   const adminOnly = (req: FastifyRequest, reply: FastifyReply): boolean => {
@@ -128,13 +135,13 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   app.post<{ Body: { name?: string; grants?: Record<string, Role>; ttlMs?: number } }>('/auth/tokens', async (req, reply) => {
     if (!adminOnly(req, reply)) return;
     const grants = req.body?.grants ?? { '*': 'admin' };
-    const issued = dox.pat.issue({ name: req.body?.name, grants, ttlMs: req.body?.ttlMs });
+    const issued = await dox.pat.issue({ name: req.body?.name, grants, ttlMs: req.body?.ttlMs });
     return { id: issued.id, token: issued.token, expiresAt: issued.expiresAt, grants };
   });
 
   app.delete('/auth/tokens/:id', async (req, reply) => {
     if (!adminOnly(req, reply)) return;
-    if (!dox.pat.revoke((req.params as { id: string }).id)) return reply.code(404).send({ error: 'not_found' });
+    if (!(await dox.pat.revoke((req.params as { id: string }).id))) return reply.code(404).send({ error: 'not_found' });
     return { ok: true };
   });
 
@@ -151,27 +158,27 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
 
   /**
    * Rebuild the lexical index and (optionally) embed what is missing. Needed after importing
-   * rows straight into SQLite, and after upgrading a store that predates the index tables.
+   * rows straight into the database, and after upgrading a store that predates the index tables.
    */
   app.post<{ Body: { scope?: string; embed?: boolean; limit?: number } }>('/index/rebuild', async (req, reply) => {
     if (!adminOnly(req, reply)) return;
-    const lexical = dox.index.rebuildLexical();
+    const lexical = await dox.index.rebuildLexical();
     const body = req.body ?? {};
     const embedded =
       body.embed === false ? null : await dox.index.backfillEmbeddings({ scope: body.scope, limit: body.limit });
-    return { lexical, embedded, stats: dox.index.stats(body.scope) };
+    return { lexical, embedded, stats: await dox.index.stats(body.scope) };
   });
 
   // ---- Projects (agent-provisioned workspaces; slug == scope namespace) ----
-  app.get('/projects', async (req, reply) => {
-    const projects = dox.projects.list();
+  app.get('/projects', async (req) => {
+    const projects = await dox.projects.list();
     if (!auth.enabled) return projects;
     const p = validatePrincipal(principalOf(req));
     return projects.filter((pr) => scopeGrant(p, pr.slug, 'read') || pr.ownerSub === p.sub);
   });
 
   app.get('/projects/:slug', async (req, reply) => {
-    const pr = dox.projects.get((req.params as { slug: string }).slug);
+    const pr = await dox.projects.get((req.params as { slug: string }).slug);
     if (!pr) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), pr.slug, 'read')) return;
     return pr;
@@ -182,20 +189,20 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     // `name` is optional: this route is the idempotent "ensure", called on every agent connect,
     // and it is only consulted when the project is actually created.
     if (!b.slug) return reply.code(400).send({ error: 'slug_required' });
-    const existing = dox.projects.get(b.slug);
+    const existing = await dox.projects.get(b.slug);
     if (existing) {
       if (!guard(req, reply, auth, principalOf(req), existing.slug, 'read')) return;
       return { project: existing, token: null, expiresAt: null };
     }
     const p = principalOf(req);
     if (auth.enabled && !p) return reply.code(401).send({ error: 'unauthorized', message: 'authenticate to create a project' });
-    const project = dox.projects.ensure({ slug: b.slug, name: b.name, description: b.description, ownerSub: p?.sub });
+    const project = await dox.projects.ensure({ slug: b.slug, name: b.name, description: b.description, ownerSub: p?.sub });
     // First claim of a brand-new project -> hand the agent a scoped PAT (shown once).
     let token: string | null = null;
     let expiresAt: number | null = null;
     if (auth.enabled && p && !scopeGrant(p, project.slug, 'write')) {
       const ttlMs = 90 * 24 * 3600 * 1000; // 90 days
-      const issued = dox.pat.issue({ name: `project:${project.slug}`, grants: { [project.slug]: 'admin' }, ttlMs });
+      const issued = await dox.pat.issue({ name: `project:${project.slug}`, grants: { [project.slug]: 'admin' }, ttlMs });
       token = issued.token;
       expiresAt = issued.expiresAt ?? null;
     }
@@ -203,7 +210,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   });
 
   app.delete('/projects/:slug', async (req, reply) => {
-    const pr = dox.projects.get((req.params as { slug: string }).slug);
+    const pr = await dox.projects.get((req.params as { slug: string }).slug);
     if (!pr) return reply.code(404).send({ error: 'not_found' });
     if (auth.enabled) {
       const p = principalOf(req);
@@ -214,7 +221,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
       }
     }
     // Cascade-remove the project row and all its scoped data, then invalidate any selected UI state.
-    dox.projects.remove(pr.slug);
+    await dox.projects.remove(pr.slug);
     return { ok: true, removed: pr.slug };
   });
 
@@ -227,7 +234,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     } else if (auth.enabled && !guard(req, reply, auth, p, undefined, 'read')) {
       return;
     }
-    const entries = dox.memory.list({
+    const entries = await dox.memory.list({
       category: q.category,
       target: q.target,
       tag: q.tag,
@@ -259,7 +266,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
 
   app.get('/memory/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const entry = dox.memory.get(id);
+    const entry = await dox.memory.get(id);
     if (!entry) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), entry.category ?? '', 'read')) return;
     return entry;
@@ -282,10 +289,10 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   app.patch<{ Params: { id: string }; Body: Partial<Omit<MemoryEntry, 'id' | 'createdAt'>> }>(
     '/memory/:id',
     async (req, reply) => {
-      const existing = dox.memory.get(req.params.id);
+      const existing = await dox.memory.get(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'not_found' });
       if (!guard(req, reply, auth, principalOf(req), existing.category ?? '', 'write')) return;
-      const entry = dox.memory.update(req.params.id, req.body);
+      const entry = await dox.memory.update(req.params.id, req.body);
       if (!entry) return reply.code(404).send({ error: 'not_found' });
       return entry;
     },
@@ -293,10 +300,10 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
 
   app.delete('/memory/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const existing = dox.memory.get(id);
+    const existing = await dox.memory.get(id);
     if (!existing) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), existing.category ?? '', 'admin')) return;
-    return { ok: dox.memory.remove(id) };
+    return { ok: await dox.memory.remove(id) };
   });
 
   // ---- Docs ----
@@ -308,7 +315,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     } else if (auth.enabled && !guard(req, reply, auth, p, undefined, 'read')) {
       return;
     }
-    const docs = dox.docs.list({ scope: q.scope, tag: q.tag, limit: q.limit ? parseInt(q.limit, 10) : undefined });
+    const docs = await dox.docs.list({ scope: q.scope, tag: q.tag, limit: q.limit ? parseInt(q.limit, 10) : undefined });
     if (!auth.enabled) return docs;
     return docs.filter((d) => scopeGrant(validatePrincipal(p), d.scope ?? '', 'read'));
   });
@@ -346,14 +353,14 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   });
 
   app.get('/docs/slug/:slug', async (req, reply) => {
-    const doc = dox.docs.getBySlug((req.params as { slug: string }).slug, (req.query as { scope?: string }).scope);
+    const doc = await dox.docs.getBySlug((req.params as { slug: string }).slug, (req.query as { scope?: string }).scope);
     if (!doc) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), doc.scope ?? '', 'read')) return;
     return doc;
   });
 
   app.get('/docs/:id', async (req, reply) => {
-    const doc = dox.docs.get((req.params as { id: string }).id);
+    const doc = await dox.docs.get((req.params as { id: string }).id);
     if (!doc) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), doc.scope ?? '', 'read')) return;
     return doc;
@@ -361,7 +368,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
 
   app.get('/docs/:id/history', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const doc = dox.docs.get(id);
+    const doc = await dox.docs.get(id);
     if (!doc) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), doc.scope ?? '', 'read')) return;
     return dox.docs.history(id);
@@ -377,10 +384,10 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   app.patch<{ Params: { id: string }; Body: Partial<Pick<Doc, 'title' | 'content' | 'tags' | 'scope' | 'slug'>> }>(
     '/docs/:id',
     async (req, reply) => {
-      const existing = dox.docs.get(req.params.id);
+      const existing = await dox.docs.get(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'not_found' });
       if (!guard(req, reply, auth, principalOf(req), existing.scope ?? '', 'write')) return;
-      const doc = dox.docs.update(req.params.id, req.body);
+      const doc = await dox.docs.update(req.params.id, req.body);
       if (!doc) return reply.code(404).send({ error: 'not_found' });
       return doc;
     },
@@ -388,10 +395,10 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
 
   app.delete('/docs/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const existing = dox.docs.get(id);
+    const existing = await dox.docs.get(id);
     if (!existing) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), existing.scope ?? '', 'admin')) return;
-    return { ok: dox.docs.remove(id) };
+    return { ok: await dox.docs.remove(id) };
   });
 
   // ---- Sessions ----
@@ -403,7 +410,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
     } else if (auth.enabled && !guard(req, reply, auth, p, undefined, 'read')) {
       return;
     }
-    const sessions = dox.sessions.list(q.scope, q.limit ? parseInt(q.limit, 10) : undefined);
+    const sessions = await dox.sessions.list(q.scope, q.limit ? parseInt(q.limit, 10) : undefined);
     if (!auth.enabled) return sessions;
     return sessions.filter((s) => scopeGrant(validatePrincipal(p), s.scope ?? '', 'read'));
   });
@@ -415,7 +422,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   });
 
   app.get('/sessions/:id', async (req, reply) => {
-    const s = dox.sessions.get((req.params as { id: string }).id);
+    const s = await dox.sessions.get((req.params as { id: string }).id);
     if (!s) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), s.scope, 'read')) return;
     return s;
@@ -424,29 +431,29 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   app.post<{ Params: { id: string }; Body: { role: string; content: string; refs?: string[] } }>(
     '/sessions/:id/messages',
     async (req, reply) => {
-      const s = dox.sessions.get(req.params.id);
+      const s = await dox.sessions.get(req.params.id);
       if (!s) return reply.code(404).send({ error: 'session_not_found' });
       if (!guard(req, reply, auth, principalOf(req), s.scope, 'write')) return;
       const { role, content, refs } = req.body;
       if (!role || !content) return reply.code(400).send({ error: 'role_content_required' });
-      const msg = dox.sessions.append(req.params.id, { role: role as never, content, refs });
+      const msg = await dox.sessions.append(req.params.id, { role: role as never, content, refs });
       if (!msg) return reply.code(404).send({ error: 'session_not_found' });
       return msg;
     },
   );
 
   app.post('/sessions/:id/end', async (req, reply) => {
-    const s = dox.sessions.get((req.params as { id: string }).id);
+    const s = await dox.sessions.get((req.params as { id: string }).id);
     if (!s) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), s.scope, 'write')) return;
     return dox.sessions.end(s.id);
   });
 
   app.delete('/sessions/:id', async (req, reply) => {
-    const s = dox.sessions.get((req.params as { id: string }).id);
+    const s = await dox.sessions.get((req.params as { id: string }).id);
     if (!s) return reply.code(404).send({ error: 'not_found' });
     if (!guard(req, reply, auth, principalOf(req), s.scope, 'admin')) return;
-    dox.sessions.remove(s.id);
+    await dox.sessions.remove(s.id);
     return { ok: true, removed: s.id };
   });
 
@@ -462,7 +469,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   app.get('/context/snapshot', async (req, reply) => {
     const scope = (req.query as { scope?: string }).scope ?? '';
     if (scope && !guard(req, reply, auth, principalOf(req), scope, 'read')) return;
-    const snap = dox.context.getSnapshot(scope);
+    const snap = await dox.context.getSnapshot(scope);
     if (!snap) return reply.code(404).send({ error: 'no_snapshot' });
     return snap;
   });
@@ -479,7 +486,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
   app.get('/context/brief', async (req, reply) => {
     const scope = (req.query as { scope?: string }).scope ?? '';
     if (scope && !guard(req, reply, auth, principalOf(req), scope, 'read')) return;
-    const brief = dox.context.getBrief(scope);
+    const brief = await dox.context.getBrief(scope);
     if (!brief) return reply.code(404).send({ error: 'no_brief' });
     return brief;
   });
@@ -576,6 +583,7 @@ export function buildApp(opts: BuildOptions = {}): { app: FastifyInstance; dox: 
  * Auto-context-update job: periodically reassemble + persist each active scope's context
  * baseline. Controlled by AGENTDOX_CONTEXT_AUTOUPDATE / AGENTDOX_CONTEXT_INTERVAL_SECONDS
  * / AGENTDOX_CONTEXT_MAX_SCOPES (default 900s=15min, 50 scopes). Returns null when disabled.
+ * With several instances on one Postgres store, run it on one of them (interval 0 elsewhere).
  */
 const EMBED_BATCH_PER_TICK = 256;
 
@@ -586,7 +594,7 @@ function startContextScheduler(dox: AgentDox, env: NodeJS.ProcessEnv = process.e
 
   const runOnce = async () => {
     try {
-      const scopes = dox.context.targetScopes().slice(0, maxScopes);
+      const scopes = (await dox.context.targetScopes()).slice(0, maxScopes);
       let refreshed = 0;
       for (const scope of scopes) {
         try {
@@ -616,7 +624,7 @@ function startContextScheduler(dox: AgentDox, env: NodeJS.ProcessEnv = process.e
 }
 
 export async function startServer(opts: BuildOptions & { port?: number } = {}): Promise<{ app: FastifyInstance; dox: AgentDox; auth: AuthContext; port: number; stopScheduler: () => void }> {
-  const { app, dox, auth } = buildApp(opts);
+  const { app, dox, auth } = await buildApp(opts);
   const port = opts.port ?? 3003;
   // Wait for async OIDC discovery to finish before listening.
   await new Promise<void>((resolve_) => {
@@ -629,7 +637,7 @@ export async function startServer(opts: BuildOptions & { port?: number } = {}): 
   const actualPort = (app.server.address() as import('node:net').AddressInfo).port;
   // Start the periodic auto-context job.
   const sched = startContextScheduler(dox, { ...process.env, ...opts.env });
-  console.log(`[agentdox] auto-context job: ${sched ? `every ${sched.intervalSeconds}s` : 'disabled'}`);
+  console.log(`[agentdox] storage: ${dox.storage}; auto-context job: ${sched ? `every ${sched.intervalSeconds}s` : 'disabled'}`);
   return { app, dox, auth, port: actualPort, stopScheduler: sched ? sched.stop : () => undefined };
 }
 
@@ -639,10 +647,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   const { app, dox, port: p, stopScheduler } = await startServer({ port });
   const shutdown = () => {
     stopScheduler();
-    app.close().then(() => {
-      dox.close();
-      process.exit(0);
-    });
+    app.close().then(() => dox.close()).then(() => process.exit(0));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
