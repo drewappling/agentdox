@@ -31,7 +31,7 @@ Keeping agentdox current is part of completing a task, not optional. Full protoc
 | Token + URL + scope | `.env.agentdox` in this repo root (**gitignored** — never commit it) |
 | What `.mcp.json` reads | the `AGENTDOX_TOKEN` **environment variable**, not the file |
 | Persisted env value | Windows **User** environment (`[Environment]::GetEnvironmentVariable('AGENTDOX_TOKEN','User')`) |
-| Server | `http://localhost:3003` — Docker container `agentdox-server` |
+| Server | `http://localhost:8790/agentdox` — the team edition's embedded agentdox (the dev container `agentdox-server` on :3003 is retired) |
 | Admin token (to re-mint the global PAT) | `deploy/.env` |
 
 ## Retrieval
