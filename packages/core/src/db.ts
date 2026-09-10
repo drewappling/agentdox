@@ -71,7 +71,9 @@ CREATE TABLE IF NOT EXISTS memory (
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
   source      TEXT,
-  author      TEXT
+  author      TEXT,
+  hits        INTEGER NOT NULL DEFAULT 0,
+  last_hit_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memory_category ON memory(category);
 CREATE INDEX IF NOT EXISTS idx_memory_importance ON memory(importance);
@@ -351,6 +353,10 @@ function openSqlite(path: string): Store {
 const ADDED_COLUMNS: { table: string; column: string; ddl: string }[] = [
   // 0.3.0: who wrote a memory entry (the principal's sub), for per-member threads.
   { table: 'memory', column: 'author', ddl: 'TEXT' },
+  // 0.4.0: retrieval hits — how often, and when last, an assembled block rendered the entry — so
+  // a fact nothing has used in months can be told from one that carries every turn.
+  { table: 'memory', column: 'hits', ddl: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'memory', column: 'last_hit_at', ddl: 'TEXT' },
 ];
 
 async function hasColumn(store: Store, table: string, column: string, schema?: string): Promise<boolean> {

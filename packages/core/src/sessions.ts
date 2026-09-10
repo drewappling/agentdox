@@ -112,6 +112,33 @@ export class SessionService {
     return this.get(sessionId);
   }
 
+  /**
+   * Write a session exactly as given and replace its messages with the ones it carries. The
+   * import path. Message ids are the engine's, so the copies get fresh ones (and fresh index
+   * rows); what is preserved is the conversation — role, content, time, refs — in order.
+   * Returns how many messages were written.
+   */
+  async upsert(session: Session): Promise<number> {
+    return this.store.tx(async () => {
+      await this.store.run(
+        `INSERT INTO sessions (id, scope, title, started_at, ended_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET scope = excluded.scope, title = excluded.title, started_at = excluded.started_at, ended_at = excluded.ended_at`,
+        [session.id, session.scope, session.title, session.startedAt, session.endedAt ?? null],
+      );
+      await this.indexer?.removeSessionMessages(session.id);
+      await this.store.run('DELETE FROM messages WHERE session_id = ?', [session.id]);
+      const messages = session.messages ?? [];
+      for (const m of messages) {
+        const inserted = await this.store.get<{ id: number }>(
+          'INSERT INTO messages (session_id, role, content, at, refs_json) VALUES (?, ?, ?, ?, ?) RETURNING id',
+          [session.id, m.role, m.content, m.at, JSON.stringify(m.refs ?? [])],
+        );
+        await this.indexer?.indexMessage({ id: Number(inserted?.id), scope: session.scope, role: m.role, content: m.content });
+      }
+      return messages.length;
+    });
+  }
+
   /** Permanently delete a session and its messages (cascades via FK). */
   async remove(sessionId: string): Promise<boolean> {
     await this.indexer?.removeSessionMessages(sessionId); // before the cascade drops the rows

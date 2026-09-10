@@ -9,7 +9,7 @@ import type { Param, Row, Store } from './db.js';
 /** Tables in dependency order, with the columns both engines share (no generated columns). */
 const TABLES: { name: string; columns: string[] }[] = [
   { name: 'projects', columns: ['id', 'slug', 'name', 'description', 'owner_sub', 'created_at'] },
-  { name: 'memory', columns: ['id', 'content', 'category', 'target', 'importance', 'tags_json', 'created_at', 'updated_at', 'source', 'author'] },
+  { name: 'memory', columns: ['id', 'content', 'category', 'target', 'importance', 'tags_json', 'created_at', 'updated_at', 'source', 'author', 'hits', 'last_hit_at'] },
   { name: 'docs', columns: ['id', 'slug', 'title', 'content', 'tags_json', 'version', 'created_at', 'updated_at', 'scope'] },
   { name: 'doc_versions', columns: ['doc_id', 'version', 'content', 'updated_at'] },
   { name: 'doc_chunks', columns: ['id', 'doc_id', 'scope', 'slug', 'title', 'heading', 'ordinal', 'content', 'updated_at'] },

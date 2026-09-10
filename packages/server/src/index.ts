@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
-import { AgentDox } from '@agentdox/core';
+import { AgentDox, parseScopeExport } from '@agentdox/core';
 import { createMcpServer } from '@agentdox/mcp';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { roleAtLeast, type ContextRequest, type Doc, type MemoryEntry, type Principal, type Role } from '@agentdox/types';
+import { roleAtLeast, type ContextRequest, type Doc, type MemoryEntry, type Principal, type Role, type ScopeExport } from '@agentdox/types';
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,9 @@ import { authenticate, guard, loadAuthContext, type AuthContext } from './auth.j
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../../..');
+
+/** Largest export `POST /import` accepts; the whole document is parsed in memory. */
+const IMPORT_BODY_LIMIT = 256 * 1024 * 1024;
 
 /** Per-request resolved principal (set once by the global onRequest hook). */
 const principals = new WeakMap<FastifyRequest, Principal | null>();
@@ -517,6 +520,26 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
     if (!scope) return reply.code(400).send({ error: 'scope_required' });
     if (!guard(req, reply, auth, principalOf(req), scope, 'write')) return;
     return dox.context.seedBrief(scope);
+  });
+
+  // ---- Export / import: one scope as one JSON document ----
+  // Offboarding hands a member their thread, migration moves a project between deployments, a
+  // backup is the file. Read on the scope takes it out; write on the scope the body names puts
+  // it in — that `scope` wins over what the entries carry, so a scope is renamed by editing one
+  // field. Upserts by id, so importing the same file twice changes nothing.
+  app.get('/export', async (req, reply) => {
+    const scope = (req.query as { scope?: string }).scope;
+    if (!scope) return reply.code(400).send({ error: 'scope_required' });
+    if (!guard(req, reply, auth, principalOf(req), scope, 'read')) return;
+    return dox.exportScope(scope);
+  });
+
+  // A scope's worth of sessions is well past Fastify's 1 MiB default body.
+  app.post<{ Body: ScopeExport }>('/import', { bodyLimit: IMPORT_BODY_LIMIT }, async (req, reply) => {
+    const payload = parseScopeExport(req.body);
+    if (!payload) return reply.code(400).send({ error: 'invalid_export', message: 'body must be an agentdox-export (version 1) document naming a scope' });
+    if (!guard(req, reply, auth, principalOf(req), payload.scope, 'write')) return;
+    return { imported: await dox.importScope(payload) };
   });
 
   // ---- MCP over HTTP (streamable transport, one authenticated session per bearer token) ----

@@ -1,6 +1,6 @@
 {
   "name": "@agentdox/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Typed TypeScript client for the agentdox REST API. Works in Node and the browser.",
   "license": "MIT",
   "type": "module",
@@ -32,7 +32,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agentdox/types": "^0.3.0"
+    "@agentdox/types": "^0.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",

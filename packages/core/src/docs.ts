@@ -163,6 +163,39 @@ export class DocService {
     return res.changes > 0;
   }
 
+  /**
+   * Write a document exactly as given — id, version, timestamps — creating or replacing the
+   * row, its revision history (`versions`, or the current content as its one revision) and its
+   * chunks. The import path: `create` and `update` mint ids and bump versions, which a copy of
+   * another store's document must not do. A different document already holding the slug in
+   * that scope gives way, since slugs are unique per scope and the import is authoritative
+   * for the scope it writes.
+   */
+  async upsert(doc: Doc, versions?: DocVersion[]): Promise<void> {
+    await this.store.tx(async () => {
+      const clash = await this.store.get<{ id: string }>(`SELECT id FROM docs WHERE ${this.store.sql.nullEq('scope')} AND slug = ? AND id != ?`, [
+        doc.scope ?? null,
+        doc.slug,
+        doc.id,
+      ]);
+      if (clash) await this.remove(clash.id);
+      await this.store.run(
+        `INSERT INTO docs (id, slug, title, content, tags_json, version, created_at, updated_at, scope)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           slug = excluded.slug, title = excluded.title, content = excluded.content, tags_json = excluded.tags_json,
+           version = excluded.version, created_at = excluded.created_at, updated_at = excluded.updated_at, scope = excluded.scope`,
+        [doc.id, doc.slug, doc.title, doc.content, JSON.stringify(doc.tags ?? []), Number(doc.version) || 1, doc.createdAt, doc.updatedAt, doc.scope ?? null],
+      );
+      await this.store.run('DELETE FROM doc_versions WHERE doc_id = ?', [doc.id]);
+      const history = versions?.length ? versions : [{ version: Number(doc.version) || 1, content: doc.content, updatedAt: doc.updatedAt }];
+      for (const v of history) {
+        await this.store.run('INSERT INTO doc_versions (doc_id, version, content, updated_at) VALUES (?, ?, ?, ?)', [doc.id, v.version, v.content, v.updatedAt]);
+      }
+      await this.indexer?.indexDoc(doc);
+    });
+  }
+
   async list(filter: DocFilter = {}): Promise<Doc[]> {
     const clauses: string[] = [];
     const args: Param[] = [];

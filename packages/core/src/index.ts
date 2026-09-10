@@ -8,13 +8,16 @@ import { PatService } from './pat.js';
 import { ProjectService } from './projects.js';
 import { IndexService } from './indexer.js';
 import { createEmbeddingProvider, readEmbeddingConfig } from './embeddings.js';
+import { exportScope, importScope } from './transfer.js';
+import type { ScopeExport, ScopeImportReport } from '@agentdox/types';
 
 export { openStore, openDatabase, isPostgresUrl, type Store, type Dialect, type Param, type Row, type PostgresOptions } from './db.js';
 export { MemoryService } from './memory.js';
 export { DocService } from './docs.js';
 export { SessionService } from './sessions.js';
 export { ContextService } from './context.js';
-export type { ContextSnapshot, ProjectBrief, DecisionEntry } from './context.js';
+export type { ContextSnapshot, ProjectBrief, DecisionEntry, AssembleOptions } from './context.js';
+export { exportScope, importScope, parseScopeExport, type TransferDeps } from './transfer.js';
 export { PatService } from './pat.js';
 export { ProjectService } from './projects.js';
 export { IndexService, type IndexStats } from './indexer.js';
@@ -77,6 +80,16 @@ export class AgentDox {
       console.error(`[agentdox] built retrieval index: ${b.memory} memory, ${b.chunks} chunks, ${b.messages} messages`);
     }
     return dox;
+  }
+
+  /** Everything `scope` holds as one JSON document, for offboarding, migration or a backup. */
+  exportScope(scope: string): Promise<ScopeExport> {
+    return exportScope(this, scope);
+  }
+
+  /** Write a `ScopeExport` into this store under the scope it names, upserting by id. */
+  importScope(payload: ScopeExport): Promise<ScopeImportReport> {
+    return importScope(this, payload);
   }
 
   /** Where the data lives, for logs and health: `sqlite:<path>` or `postgres:<host>/<db> (schema …)`. */

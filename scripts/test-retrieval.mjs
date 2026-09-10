@@ -280,6 +280,50 @@ check('index builds on write', stats.memory.total === MEMORY.length && stats.chu
   const tail = await dox.sessions.recentMessages(PROJECT, 10, 'bob');
   check('recentMessages filters by user ref', tail.length === 2 && tail.every((m) => /bob/.test(m.content)));
 
+  // ---------- retrieval hits (project memory, phase three) ----------
+  // Every entry a block renders is counted once per assembly, stamped with the slice's
+  // assembledAt, and nothing else is: not an entry a limit left out, not a layer the request did
+  // not name, not the scheduler's snapshot. The golden check above already pins that the counter
+  // never reaches the prompt.
+  {
+    const HITS = 'fixture-hits';
+    const top = await dox.memory.create({ content: 'Hit fact: the top one.', category: HITS, importance: 0.9, tags: [] });
+    const mid = await dox.memory.create({ content: 'Hit fact: the middle one.', category: HITS, importance: 0.6, tags: [] });
+    const low = await dox.memory.create({ content: 'Hit fact: the low one.', category: HITS, importance: 0.3, tags: [] });
+    const hitsOf = async (e) => (await dox.memory.get(e.id)).hits;
+    check('a fresh entry has no hits', top.hits === 0 && top.lastHitAt === undefined && (await hitsOf(top)) === 0);
+
+    const slice = await dox.context.assemble({ scope: HITS, memoryLimit: 2 });
+    const [t1, m1, l1] = [await dox.memory.get(top.id), await dox.memory.get(mid.id), await dox.memory.get(low.id)];
+    check('the rendered entries are hit once, stamped with the slice assembledAt',
+      t1.hits === 1 && t1.lastHitAt === slice.assembledAt && m1.hits === 1 && m1.lastHitAt === slice.assembledAt,
+      JSON.stringify([t1.hits, t1.lastHitAt, slice.assembledAt]));
+    check('an entry the limit left out is not hit', l1.hits === 0 && l1.lastHitAt === undefined);
+    check('the listing carries the counter', (await dox.memory.list({ category: HITS })).find((e) => e.id === top.id)?.hits === 1);
+
+    await dox.context.assemble({ scope: HITS, memoryLimit: 0 });
+    check('memoryLimit 0 hits nothing', (await hitsOf(top)) === 1);
+    await dox.context.saveSnapshot(HITS);
+    check('the scheduler snapshot is not a use', (await hitsOf(top)) === 1);
+    check('an edit is not a use either, and keeps the count', (await dox.memory.update(top.id, { content: 'Hit fact: the top one, edited.' })).hits === 1);
+
+    // Layers: the group's rendered entries and the personal handoff plus notes count; the
+    // entries the limits left out and the stale handoff do not.
+    const countsOf = async (scope) => Object.fromEntries((await dox.memory.list({ category: scope, limit: 50 })).map((e) => [e.content, e.hits]));
+    const groupBefore = await countsOf(GROUP);
+    const personalBefore = await countsOf(PERSONAL);
+    const layered2 = await dox.context.assemble({ scope: HITS, memoryLimit: 1, group: GROUP, groupMemoryLimit: 2, personal: PERSONAL, personalLimit: 1 });
+    const bumped = (before, after) => Object.keys(after).filter((k) => after[k] === before[k] + 1);
+    const groupHit = bumped(groupBefore, await countsOf(GROUP));
+    const personalHit = bumped(personalBefore, await countsOf(PERSONAL));
+    check('the group layer hits exactly its rendered entries', groupHit.length === 2 && groupHit.every((c) => /Group fact [45]/.test(c)), JSON.stringify(groupHit));
+    check('the personal layer hits the handoff and the rendered notes only',
+      personalHit.length === 2 && personalHit.some((c) => /^Done: wired/.test(c)) && personalHit.some((c) => /Makefile over/.test(c)),
+      JSON.stringify(personalHit));
+    check('the project layer hits within its own limit', (await hitsOf(top)) === 2 && (await hitsOf(mid)) === 1 && (await dox.memory.get(top.id)).lastHitAt === layered2.assembledAt);
+    check('a layer the request did not name is untouched', JSON.stringify(await countsOf(PERSONAL)) === JSON.stringify(await (async () => { await dox.context.assemble({ scope: HITS, memoryLimit: 0, group: GROUP, groupMemoryLimit: 1 }); return countsOf(PERSONAL); })()));
+  }
+
   await dox.sessions.remove(session.id);
 }
 

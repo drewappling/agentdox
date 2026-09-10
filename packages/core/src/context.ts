@@ -90,10 +90,20 @@ export interface ContextAssemblerDeps {
   store: Store;
 }
 
+/** Options the callers inside core pass to `assemble`; the request itself is the public shape. */
+export interface AssembleOptions {
+  /**
+   * Count a retrieval hit on every memory entry the block renders (the default). The
+   * scheduler's baseline snapshot passes false: a refresh nobody asked for is not a use, and
+   * counting it would keep every top entry looking fresh forever.
+   */
+  recordHits?: boolean;
+}
+
 export class ContextService {
   constructor(private readonly deps: ContextAssemblerDeps) {}
 
-  async assemble(request: ContextRequest): Promise<ContextSlice> {
+  async assemble(request: ContextRequest, opts: AssembleOptions = {}): Promise<ContextSlice> {
     const memoryLimit = request.memoryLimit ?? DEFAULT_MEMORY_LIMIT;
     const docsLimit = request.docsLimit ?? DEFAULT_DOCS_LIMIT;
     const sessionLimit = request.sessionLimit ?? DEFAULT_SESSION_LIMIT;
@@ -178,6 +188,15 @@ export class ContextService {
       : null;
     const personalBlock = request.personal ? await this.renderPersonal(request.personal, request.personalLimit ?? DEFAULT_PERSONAL_LIMIT) : null;
     const prompt = [groupBlock?.text, projectBlock, personalBlock?.text].filter((b): b is string => !!b).join('\n\n');
+    const assembledAt = new Date().toISOString();
+
+    // --- Hits: every memory entry the prompt carries, and only those, in one statement. ---
+    // Recorded after rendering and never rendered (the block is byte-identical with or without
+    // the count), and a failure here is swallowed: a hit must never fail a turn.
+    if (opts.recordHits !== false) {
+      const rendered = [...memory.map((h) => h.entry.id), ...(groupBlock?.hit ?? []), ...(personalBlock?.hit ?? [])];
+      await this.deps.memory.recordHits(rendered, assembledAt).catch(() => undefined);
+    }
     const layers: ContextLayers = {
       group: groupBlock && request.group ? { scope: request.group, chars: groupBlock.text.length } : null,
       project: { chars: projectBlock.length },
@@ -189,7 +208,7 @@ export class ContextService {
 
     return {
       request,
-      assembledAt: new Date().toISOString(),
+      assembledAt,
       memory,
       docs,
       passages,
@@ -209,8 +228,9 @@ export class ContextService {
    * `# Group context: <group>`: the group scope's brief (its sections and decisions, within
    * what is left of the budget once the memory lines are counted) and its top memory entries
    * by importance. Query-independent, like the project brief, so it caches across turns.
+   * `hit` names the entries whose line survived the budget, for the hit counter.
    */
-  private async renderGroup(group: string, budgetChars: number, memoryLimit: number): Promise<{ text: string }> {
+  private async renderGroup(group: string, budgetChars: number, memoryLimit: number): Promise<{ text: string; hit: string[] }> {
     const header = `# Group context: ${group}\n`;
     const entries = memoryLimit > 0 ? await this.deps.memory.list({ category: group, limit: memoryLimit }) : [];
     const memoryBlock = entries.length ? ['## Memory', ...entries.map(memoryLine)].join('\n') : '';
@@ -221,16 +241,19 @@ export class ContextService {
     const briefText = brief && briefBudget > header.length ? this.renderBriefParts(header, brief, briefBudget) : header.trimEnd();
     const parts = [briefText, memoryBlock].filter(Boolean);
     const text = !brief && !memoryBlock ? `${header}(nothing recorded for this group yet)` : parts.join('\n\n');
-    return { text: text.length <= budgetChars ? text : text.slice(0, budgetChars) };
+    const out = text.length <= budgetChars ? text : text.slice(0, budgetChars);
+    // The cut, when there is one, falls on the memory block last; an entry counts only whole.
+    return { text: out, hit: entries.filter((e) => out.includes(memoryLine(e))).map((e) => e.id) };
   }
 
   /**
    * `# Your thread in <scope>`: one member's own thread in the project. The handoff note (the
    * entry tagged `handoff`, newest if there are several) leads and is rendered whole — it is the
    * one thing a resuming session must not lose the end of — and up to `limit` further entries
-   * follow by importance. Stale handoffs are left out rather than listed as notes.
+   * follow by importance. Stale handoffs are left out rather than listed as notes, and are not
+   * hit: `hit` is the handoff that led plus the notes.
    */
-  private async renderPersonal(scope: string, limit: number): Promise<{ text: string; handoff: boolean }> {
+  private async renderPersonal(scope: string, limit: number): Promise<{ text: string; handoff: boolean; hit: string[] }> {
     const handoffs = await this.deps.memory.list({ category: scope, tag: HANDOFF_TAG, limit: 20 });
     const handoff = handoffs.length ? handoffs.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a)) : null;
     const pool = limit > 0 ? await this.deps.memory.list({ category: scope, limit: limit + handoffs.length }) : [];
@@ -247,12 +270,12 @@ export class ContextService {
       for (const e of notes) lines.push(memoryLine(e));
     }
     if (!handoff && !notes.length) lines.push('(no personal thread in this project yet)');
-    return { text: lines.join('\n'), handoff: handoff !== null };
+    return { text: lines.join('\n'), handoff: handoff !== null, hit: [...(handoff ? [handoff.id] : []), ...notes.map((e) => e.id)] };
   }
 
-  /** Assemble + persist a context baseline for a scope (auto-context-update job). */
+  /** Assemble + persist a context baseline for a scope (auto-context-update job). Not a use: no hits. */
   async saveSnapshot(scope: string, query = ''): Promise<ContextSnapshot> {
-    const s = await this.assemble({ scope, query });
+    const s = await this.assemble({ scope, query }, { recordHits: false });
     const snap: ContextSnapshot = {
       scope,
       query,
@@ -394,6 +417,17 @@ export class ContextService {
     }
     await this.persistBrief(brief);
     return brief;
+  }
+
+  /**
+   * Store a brief exactly as given under `scope` — sections, decision log and `updatedAt` alike.
+   * The import path: a brief copied from another store keeps its history and its clock, where
+   * `saveBrief` would stamp it as edited now.
+   */
+  async putBrief(scope: string, brief: ProjectBrief): Promise<ProjectBrief> {
+    const whole: ProjectBrief = { ...this.emptyBrief(scope), ...brief, scope, decisionLog: Array.isArray(brief.decisionLog) ? brief.decisionLog : [] };
+    await this.persistBrief(whole);
+    return whole;
   }
 
   private async persistBrief(brief: ProjectBrief): Promise<void> {

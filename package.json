@@ -1,6 +1,6 @@
 {
   "name": "agentdox",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Dynamic context, memory, and documentation framework for AI agents",
   "type": "module",
@@ -20,6 +20,7 @@
     "test:server-auth": "node --disable-warning=ExperimentalWarning scripts/test-server-auth.mjs",
     "test:retrieval": "node --disable-warning=ExperimentalWarning scripts/test-retrieval.mjs",
     "test:migrate": "node --disable-warning=ExperimentalWarning scripts/test-migrate.mjs",
+    "test:export": "node --disable-warning=ExperimentalWarning scripts/test-export.mjs",
     "test:projects": "node --disable-warning=ExperimentalWarning scripts/projects-smoke.mjs"
   },
   "engines": {

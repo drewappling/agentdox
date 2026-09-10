@@ -31,6 +31,14 @@ export interface MemoryEntry {
   source?: string;
   /** Who wrote it: the authenticated principal's `sub` when there was one. Absent otherwise. */
   author?: string;
+  /**
+   * How many assembled context blocks have rendered this entry. Counted per assembly, not per
+   * listing or search, so it measures what actually reached a model. 0 for rows written before
+   * 0.4 and for entries no block has used yet.
+   */
+  hits: number;
+  /** When a block last rendered it (that slice's `assembledAt`). Absent until one has. */
+  lastHitAt?: string;
 }
 
 export type MemoryTarget = 'user' | 'memory';
@@ -262,6 +270,35 @@ export interface Project {
   /** Scope grant owner (sub), if it was agent-provisioned. */
   ownerSub?: string;
   createdAt: string;
+}
+
+// ---- Export / import ----
+
+/**
+ * Everything one scope holds, as `GET /export?scope=` returns it and `POST /import` accepts it:
+ * the project row, the brief, memory, docs (with their revisions), sessions with their messages.
+ * Nothing from any other scope. `scope` is authoritative on import — the entries' own
+ * category/scope are overwritten with it, so a scope can be renamed by editing one field.
+ */
+export interface ScopeExport {
+  format: 'agentdox-export';
+  version: 1;
+  scope: string;
+  exportedAt: string;
+  project: Project | null;
+  brief: ProjectBrief | null;
+  memory: MemoryEntry[];
+  docs: (Doc & { versions?: DocVersion[] })[];
+  sessions: Session[];
+}
+
+/** What an import wrote: rows upserted (or replaced) per kind, and whether a brief came along. */
+export interface ScopeImportReport {
+  memory: number;
+  docs: number;
+  sessions: number;
+  messages: number;
+  brief: boolean;
 }
 
 /** Result of provisioning a project: the project plus an optional freshly-issued token. */

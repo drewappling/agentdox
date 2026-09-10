@@ -39,7 +39,9 @@ one store, with per-project scoping and optional OIDC auth.
 - **Project** — a workspace whose `slug` **is** the scope namespace. Everything else is keyed by
   it. Agents provision their own project on connect (`project_ensure`), which is idempotent.
 - **Memory** — durable, compact facts stored as small entries with a `category` (== scope), an
-  optional `target`, `tags`, and an `importance` (0..1) that nudges ranking and eviction.
+  optional `target`, `tags`, and an `importance` (0..1) that nudges ranking and eviction. Each
+  entry also carries who wrote it (`author`) and how often an assembled block has used it
+  (`hits`, `lastHitAt`), so stale facts can be told from load-bearing ones.
 - **Docs** — versioned markdown documentation agents can read, write, search, and diff. Every
   save snapshots the previous revision (`GET /docs/:id/history`).
 - **Sessions** — running conversation history. Assembled context draws on it, and older messages
@@ -302,6 +304,34 @@ a personal scope tells its own notes from a relay. The naming of the three scope
 caller's: the auto-model-router team edition uses `group.<id>`, the project slug, and
 `<slug>.u.<user>`.
 
+Every memory entry an assembly renders — the project layer's, the group's, the personal
+handoff and notes — takes one retrieval hit (`hits + 1`, `lastHitAt = assembledAt`), in one
+statement after rendering, so `GET /memory` can show what a block actually uses and what
+nothing has asked for in months. Entries a request left out (`memoryLimit: 0`, a layer not
+named) are not hit, nor is the scheduler's baseline snapshot; the count never reaches the
+prompt, and a failure to record it never fails a turn.
+
+### Export and import per scope
+
+Everything one scope holds travels as one JSON document — for offboarding (hand a member
+their thread), migration (a project to another deployment) or a backup:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:3003/export?scope=acme" > acme.agentdox.json
+curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -X POST http://localhost:3003/import --data-binary @acme.agentdox.json
+```
+
+The document is `{ format: "agentdox-export", version: 1, scope, exportedAt, project, brief,
+memory: MemoryEntry[], docs: (Doc & { versions })[], sessions: (Session & { messages })[] }` —
+nothing from any other scope. `GET /export` needs read on the scope; `POST /import` needs write
+on the scope the **body** names, which wins over the entries' own category/scope, so a scope is
+renamed by editing that one field. Import upserts by id (memory, docs with their revisions,
+sessions with their messages; the brief replaced whole; the project row created when the slug
+is new), re-indexes what it wrote and answers `{ imported: { memory, docs, sessions, messages,
+brief } }`. Importing the same file twice changes nothing. Ids are global, so within one store
+an import under another name moves the entries rather than copying them.
+
 ## The auto-model-router integration
 
 agentdox is the **shared memory and context backend** for
@@ -378,8 +408,10 @@ same-origin in a production build), `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID` (`
 `/search`, `/:id` GET/PATCH/DELETE); `/docs` (GET/POST, `/search`, `/passages`, `/slug/:slug`,
 `/:id` GET/PATCH/DELETE, `/:id/history`); `/sessions` (GET/POST, `/:id` GET, `/:id/messages`,
 `/:id/end`, DELETE); `/context/{assemble,snapshot,refresh}` (assemble takes the layered-context
-fields above) and `/context/brief` (GET/PUT, `/decision`, `/seed`); `/mcp` (streamable MCP
-transport). `POST /memory` records the caller as `author` when the body has none.
+fields above) and `/context/brief` (GET/PUT, `/decision`, `/seed`); `/export?scope=` and
+`/import` (one scope as one document, above); `/mcp` (streamable MCP transport). `POST /memory`
+records the caller as `author` when the body has none; memory entries list with `hits` and
+`lastHitAt`.
 
 **MCP tools** (`packages/mcp`, 20): `project_ensure`, `project_list`; `memory_add`,
 `memory_search`, `memory_list`, `memory_update`, `memory_remove`; `docs_write`, `docs_read`,
@@ -396,8 +428,13 @@ transport). `POST /memory` records the caller as `author` when the body has none
 npm run typecheck          # all workspaces
 npm run test:auth          # OIDC/PAT/RBAC unit checks
 npm run test:server-auth   # end-to-end HTTP auth + cross-scope isolation
-npm run test:retrieval     # ranking regression fixture (vector checks skip with no provider)
+npm run test:retrieval     # ranking regression fixture, layered assembly, retrieval hits (vector checks skip with no provider)
+npm run test:export        # export / import round trip and the route grants
+npm run test:migrate       # store copy SQLite → Postgres → SQLite (needs AGENTDOX_TEST_DATABASE_URL)
 ```
+
+`AGENTDOX_TEST_DATABASE_URL=postgres://…` runs the retrieval, export and migrate suites on
+Postgres as well, in throwaway schemas.
 
 End-to-end web tests use Playwright (`e2e/`); credentials and the IdP host are environment-overridable
 (`E2E_USER`, `E2E_PASS`, `E2E_KEYCLOAK_HOST`).

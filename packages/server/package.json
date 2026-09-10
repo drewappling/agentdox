@@ -1,6 +1,6 @@
 {
   "name": "@agentdox/server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Fastify REST API and MCP-over-HTTP for agentdox.",
   "license": "MIT",
   "type": "module",
@@ -49,10 +49,10 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agentdox/auth": "^0.3.0",
-    "@agentdox/core": "^0.3.0",
-    "@agentdox/mcp": "^0.3.0",
-    "@agentdox/types": "^0.3.0",
+    "@agentdox/auth": "^0.4.0",
+    "@agentdox/core": "^0.4.0",
+    "@agentdox/mcp": "^0.4.0",
+    "@agentdox/types": "^0.4.0",
     "@fastify/cors": "^10.0.1",
     "fastify": "^5.0.0"
   },

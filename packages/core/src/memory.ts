@@ -15,6 +15,8 @@ type Row = {
   updated_at: string;
   source: string | null;
   author: string | null;
+  hits: number;
+  last_hit_at: string | null;
 };
 
 /**
@@ -61,10 +63,15 @@ export class MemoryService {
       updatedAt: row.updated_at,
       source: row.source ?? undefined,
       author: row.author ?? undefined,
+      // The driver may hand a BIGINT back as a string; a pre-0.4 row read through an old
+      // SELECT has no value at all. Both land as a number.
+      hits: Number(row.hits ?? 0),
+      lastHitAt: row.last_hit_at ?? undefined,
     };
   }
 
-  async create(input: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'> & Partial<Pick<MemoryEntry, 'id'>>): Promise<MemoryEntry> {
+  /** Hits start at zero and are counted by context assembly; a caller never sets them. */
+  async create(input: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt' | 'hits' | 'lastHitAt'> & Partial<Pick<MemoryEntry, 'id'>>): Promise<MemoryEntry> {
     const now = nowIso();
     const entry: MemoryEntry = {
       id: input.id ?? newId('mem'),
@@ -73,6 +80,7 @@ export class MemoryService {
       tags: input.tags ?? [],
       createdAt: now,
       updatedAt: now,
+      hits: 0,
       ...(input.category ? { category: input.category } : {}),
       ...(input.target ? { target: input.target } : {}),
       ...(input.source ? { source: input.source } : {}),
@@ -105,7 +113,8 @@ export class MemoryService {
     return row ? this.toEntry(row) : null;
   }
 
-  async update(id: string, patch: Partial<Omit<MemoryEntry, 'id' | 'createdAt'>>): Promise<MemoryEntry | null> {
+  /** Hits are not part of the patch: an edit is not a use, and the counter belongs to assembly. */
+  async update(id: string, patch: Partial<Omit<MemoryEntry, 'id' | 'createdAt' | 'hits' | 'lastHitAt'>>): Promise<MemoryEntry | null> {
     const existing = await this.get(id);
     if (!existing) return null;
     const next: MemoryEntry = {
@@ -135,6 +144,49 @@ export class MemoryService {
       await this.indexer?.indexMemory(next);
     });
     return this.get(id);
+  }
+
+  /**
+   * Write an entry exactly as given — id, timestamps, author, hits included — creating or
+   * replacing the row, and index it. This is the import path: a copy of another store's entry
+   * must keep its identity and its history, which `create` and `update` are built not to allow.
+   */
+  async upsert(entry: MemoryEntry): Promise<void> {
+    await this.store.tx(async () => {
+      await this.store.run(
+        `INSERT INTO memory (id, content, category, target, importance, tags_json, created_at, updated_at, source, author, hits, last_hit_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           content = excluded.content, category = excluded.category, target = excluded.target,
+           importance = excluded.importance, tags_json = excluded.tags_json, created_at = excluded.created_at,
+           updated_at = excluded.updated_at, source = excluded.source, author = excluded.author,
+           hits = excluded.hits, last_hit_at = excluded.last_hit_at`,
+        [
+          entry.id,
+          entry.content,
+          entry.category ?? null,
+          entry.target ?? null,
+          clamp01(Number(entry.importance)),
+          JSON.stringify(entry.tags ?? []),
+          entry.createdAt,
+          entry.updatedAt,
+          entry.source ?? null,
+          entry.author ?? null,
+          Number(entry.hits ?? 0),
+          entry.lastHitAt ?? null,
+        ],
+      );
+      await this.indexer?.indexMemory(entry);
+    });
+  }
+
+  /**
+   * Count one retrieval hit on each of `ids`, stamped `at`: one statement however many entries
+   * a block rendered. Context assembly calls it after rendering; nothing else should.
+   */
+  async recordHits(ids: string[], at: string): Promise<void> {
+    if (!ids.length) return;
+    await this.store.run(`UPDATE memory SET hits = hits + 1, last_hit_at = ? WHERE id IN (${ids.map(() => '?').join(', ')})`, [at, ...ids]);
   }
 
   async remove(id: string): Promise<boolean> {
