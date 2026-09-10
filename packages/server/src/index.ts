@@ -275,7 +275,8 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   app.post<{ Body: Partial<MemoryEntry> }>('/memory', async (req, reply) => {
     const body = req.body;
     if (!body?.content) return reply.code(400).send({ error: 'content_required' });
-    if (!guard(req, reply, auth, principalOf(req), body.category ?? '', 'write')) return;
+    const p = principalOf(req);
+    if (!guard(req, reply, auth, p, body.category ?? '', 'write')) return;
     return dox.memory.create({
       content: body.content,
       category: body.category,
@@ -283,6 +284,8 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
       importance: body.importance ?? 0.5,
       tags: body.tags ?? [],
       source: body.source,
+      // Who wrote it: the body may say (an import, a relay on someone's behalf), else the caller.
+      author: body.author ?? p?.sub,
     });
   });
 
@@ -461,7 +464,11 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   app.post<{ Body: ContextRequest }>('/context/assemble', async (req, reply) => {
     const scope = req.body?.scope;
     if (!scope) return reply.code(400).send({ error: 'scope_required' });
-    if (!guard(req, reply, auth, principalOf(req), scope, 'read')) return;
+    const p = principalOf(req);
+    if (!guard(req, reply, auth, p, scope, 'read')) return;
+    // The optional layers are scopes too, and read the same way.
+    if (req.body.group && !guard(req, reply, auth, p, req.body.group, 'read')) return;
+    if (req.body.personal && !guard(req, reply, auth, p, req.body.personal, 'read')) return;
     return dox.context.assemble({ ...req.body, scope });
   });
 

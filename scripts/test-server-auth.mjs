@@ -76,6 +76,9 @@ check('demo reader denied unrelated scope -> 403', r.status === 403);
 // admin can write anywhere
 r = await post('/memory', ADMIN, { content: 'admin wrote this', category: 'demo', importance: 0.9 });
 check('admin can write memory -> 200', r.status === 200);
+check('the author is the caller when the body has none', typeof r.body.author === 'string' && r.body.author.length > 0);
+r = await post('/memory', ADMIN, { content: 'relayed on behalf of someone', category: 'demo', author: 'alice' });
+check('an author in the body is kept', r.body.author === 'alice');
 
 // demo reader listing all memory is filtered to its readable scopes
 r = await get('/memory', demo);

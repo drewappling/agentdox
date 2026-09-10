@@ -277,6 +277,31 @@ never an error. `GET /index/stats?scope=…` reports coverage and provider reach
 `POST /index/rebuild` forces a full pass. Design and measurements:
 [`docs/architecture/rag.md`](docs/architecture/rag.md).
 
+### Layered context
+
+A turn can draw on three scopes at once, rendered most-stable first so a prompt cache holds
+the front of the block across turns: a **group** layer (what is true across every project the
+group works on), the **project** block (the single-scope assembly above), and a **personal**
+layer (one member's own thread in the project, led by a *handoff note*). `POST /context/assemble`
+takes, all optional:
+
+| field | meaning | default |
+| --- | --- | --- |
+| `group` | a scope whose brief and top memory render first as `# Group context: <group>` | none |
+| `groupChars` | budget for that section | 4000 |
+| `groupMemoryLimit` | memory entries from the group scope, by importance | 4 |
+| `personal` | a scope whose memory renders last as `# Your thread in <scope>`: the entry tagged `handoff` first, rendered whole, then the rest by importance | none |
+| `personalLimit` | entries from the personal scope, the handoff not counted | 6 |
+| `user` | in the project layer, keep only messages whose `refs` include `user:<user>` in the *recent* tail; relevance-ranked older turns stay unfiltered | everyone |
+
+The response gains `layers` (`{ group, project, personal }`, each with the characters it
+contributed; `personal.handoff` says whether a handoff note was found). With none of the fields
+present the prompt is byte-identical to a single-scope assembly, so older callers see no change.
+Memory entries carry an `author` (the caller's `sub`, unless the body names one), which is how
+a personal scope tells its own notes from a relay. The naming of the three scopes is the
+caller's: the auto-model-router team edition uses `group.<id>`, the project slug, and
+`<slug>.u.<user>`.
+
 ## The auto-model-router integration
 
 agentdox is the **shared memory and context backend** for
@@ -352,8 +377,9 @@ same-origin in a production build), `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID` (`
 `/index/{stats,rebuild}`; `/projects` (GET/POST, `/:slug` GET/DELETE); `/memory` (GET/POST,
 `/search`, `/:id` GET/PATCH/DELETE); `/docs` (GET/POST, `/search`, `/passages`, `/slug/:slug`,
 `/:id` GET/PATCH/DELETE, `/:id/history`); `/sessions` (GET/POST, `/:id` GET, `/:id/messages`,
-`/:id/end`, DELETE); `/context/{assemble,snapshot,refresh}` and `/context/brief`
-(GET/PUT, `/decision`, `/seed`); `/mcp` (streamable MCP transport).
+`/:id/end`, DELETE); `/context/{assemble,snapshot,refresh}` (assemble takes the layered-context
+fields above) and `/context/brief` (GET/PUT, `/decision`, `/seed`); `/mcp` (streamable MCP
+transport). `POST /memory` records the caller as `author` when the body has none.
 
 **MCP tools** (`packages/mcp`, 20): `project_ensure`, `project_list`; `memory_add`,
 `memory_search`, `memory_list`, `memory_update`, `memory_remove`; `docs_write`, `docs_read`,

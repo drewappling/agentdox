@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS memory (
   tags_json   TEXT NOT NULL DEFAULT '[]',
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
-  source      TEXT
+  source      TEXT,
+  author      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memory_category ON memory(category);
 CREATE INDEX IF NOT EXISTS idx_memory_importance ON memory(importance);
@@ -338,6 +339,46 @@ function openSqlite(path: string): Store {
 }
 
 // ---------------------------------------------------------------------------------------
+// Columns added after a table first shipped
+// ---------------------------------------------------------------------------------------
+
+/**
+ * Columns added to a table after the first release. `CREATE TABLE IF NOT EXISTS` does nothing
+ * for a store that already has the table, so each addition is also a guarded `ALTER TABLE` run
+ * on open. Both engines are checked through their catalogue rather than by trying the ALTER
+ * and swallowing the error, so a real failure still surfaces.
+ */
+const ADDED_COLUMNS: { table: string; column: string; ddl: string }[] = [
+  // 0.3.0: who wrote a memory entry (the principal's sub), for per-member threads.
+  { table: 'memory', column: 'author', ddl: 'TEXT' },
+];
+
+async function hasColumn(store: Store, table: string, column: string, schema?: string): Promise<boolean> {
+  if (store.dialect === 'sqlite') {
+    const cols = await store.all<{ name: string }>(`PRAGMA table_info(${table})`);
+    return cols.some((c) => c.name === column);
+  }
+  const row = await store.get<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+    [schema ?? 'agentdox', table, column],
+  );
+  return Number(row?.n ?? 0) > 0;
+}
+
+/** Add `column` to `table` when the store predates it. Idempotent; safe to run on every open. */
+export async function ensureColumn(store: Store, table: string, column: string, ddl: string, schema?: string): Promise<boolean> {
+  if (await hasColumn(store, table, column, schema)) return false;
+  // Postgres can be told not to race a second instance doing the same; SQLite has one writer.
+  const ifMissing = store.dialect === 'postgres' ? 'IF NOT EXISTS ' : '';
+  await store.exec(`ALTER TABLE ${table} ADD COLUMN ${ifMissing}${column} ${ddl}`);
+  return true;
+}
+
+async function ensureAddedColumns(store: Store, schema?: string): Promise<void> {
+  for (const c of ADDED_COLUMNS) await ensureColumn(store, c.table, c.column, c.ddl, schema);
+}
+
+// ---------------------------------------------------------------------------------------
 // Postgres
 // ---------------------------------------------------------------------------------------
 
@@ -459,7 +500,9 @@ export const isPostgresUrl = (target: string): boolean => /^postgres(ql)?:\/\//i
  * path of a SQLite file. Creates whatever schema is missing; both are safe to reopen.
  */
 export async function openStore(target: string, opts: PostgresOptions = {}): Promise<Store> {
-  return isPostgresUrl(target) ? openPostgres(target, opts) : openSqlite(target);
+  const store = isPostgresUrl(target) ? await openPostgres(target, opts) : openSqlite(target);
+  await ensureAddedColumns(store, isPostgresUrl(target) ? (opts.schema ?? 'agentdox') : undefined);
+  return store;
 }
 
 /** @deprecated Use `openStore`, which is asynchronous and dialect-aware. */

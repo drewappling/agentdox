@@ -170,6 +170,119 @@ check('index builds on write', stats.memory.total === MEMORY.length && stats.chu
   check('search still works after the rebuild', /CarriageBuilder\.Assemble/.test(hits[0] ?? ''));
 }
 
+// ---------- layered assembly (project memory, phase one) ----------
+// Three scopes stand in for what the team names: a group ("true across every project"), a
+// project everyone shares, and one member's personal thread in it. The assertions pin the
+// section order, the per-user recent tail, the handoff leading the personal section, the
+// `layers` accounting, and — the one that matters most — that a request carrying only `scope`
+// still renders the pre-0.3 block byte for byte.
+{
+  const GROUP = 'fixture-group';
+  const PROJECT = 'fixture-project';
+  const PERSONAL = `${PROJECT}.u.alice`;
+
+  await dox.context.saveBrief(GROUP, { overview: 'The platform group owns the deploy pipeline and the shared libraries.', gotchas: 'Never deploy on a Friday.' });
+  await dox.context.addDecision(GROUP, { title: 'Sign images', decision: 'cosign on every build', rationale: 'supply chain' });
+  for (let i = 0; i < 6; i++) {
+    await dox.memory.create({ content: `Group fact ${i}: shared library ${i} is owned by platform.`, category: GROUP, importance: 0.5 + i * 0.05, tags: [] });
+  }
+
+  await dox.memory.create({ content: 'The project builds with make and ships as one container.', category: PROJECT, importance: 0.9, tags: [] });
+  await dox.memory.create({ content: 'Integration tests need the fake upstream on port 9.', category: PROJECT, importance: 0.8, tags: [] });
+  const session = await dox.sessions.create({ scope: PROJECT, title: 'shared' });
+  await dox.sessions.append(session.id, { role: 'user', content: 'alice: where does the build config live?', refs: ['user:alice'] });
+  await dox.sessions.append(session.id, { role: 'assistant', content: 'alice-answer: in the Makefile at the repo root.', refs: ['user:alice'] });
+  await dox.sessions.append(session.id, { role: 'user', content: 'bob: how do I run the integration tests?', refs: ['user:bob'] });
+  await dox.sessions.append(session.id, { role: 'assistant', content: 'bob-answer: start the fake upstream first.', refs: ['user:bob'] });
+  await dox.sessions.append(session.id, { role: 'user', content: 'untagged: a message recorded by an old router.' });
+
+  const handoff = await dox.memory.create({
+    content: 'Done: wired the build. Open: the integration test port clashes. Next: move the fake upstream to port 19.',
+    category: PERSONAL, importance: 0.3, tags: ['handoff'],
+  });
+  await dox.memory.create({ content: 'Alice prefers the Makefile over the wrapper script.', category: PERSONAL, importance: 0.9, tags: [] });
+  await dox.memory.create({ content: 'Alice is mid-way through the port change.', category: PERSONAL, importance: 0.7, tags: [] });
+  await dox.memory.create({ content: 'A stale handoff from last week.', category: PERSONAL, importance: 0.95, tags: ['handoff'] });
+  // The real handoff is the newest one, whatever its importance (a beat later, so the clock moves).
+  await new Promise((r) => setTimeout(r, 5));
+  await dox.memory.update(handoff.id, { importance: 0.31 });
+
+  // The pre-0.3 block for the project, rendered to the letter: single scope, no query, no brief.
+  const plain = await dox.context.assemble({ scope: PROJECT, sessionLimit: 3 });
+  const expectedPlain = [
+    `# Context: ${PROJECT}`,
+    '',
+    '## Memory',
+    `- (0.90) [${PROJECT}] The project builds with make and ships as one container.`,
+    `- (0.80) [${PROJECT}] Integration tests need the fake upstream on port 9.`,
+    '',
+    '## Docs',
+    '(no docs in this scope)',
+    '## Recent conversation',
+    'user:: bob: how do I run the integration tests?',
+    'assistant:: bob-answer: start the fake upstream first.',
+    'user:: untagged: a message recorded by an old router.',
+  ].join('\n');
+  check('a single-scope request renders the pre-0.3 block byte for byte', plain.prompt === expectedPlain, `got:\n${plain.prompt}`);
+  check('a single-scope slice reports one project layer', plain.layers.group === null && plain.layers.personal === null && plain.layers.project.chars === plain.prompt.length);
+
+  const layered = await dox.context.assemble({ scope: PROJECT, sessionLimit: 3, group: GROUP, personal: PERSONAL, user: 'alice', groupMemoryLimit: 2, personalLimit: 1 });
+  const at = (needle) => layered.prompt.indexOf(needle);
+  const groupAt = at(`# Group context: ${GROUP}`);
+  const projectAt = at(`# Context: ${PROJECT}`);
+  const personalAt = at(`# Your thread in ${PERSONAL}`);
+  check('sections render group, then project, then personal', groupAt === 0 && groupAt < projectAt && projectAt < personalAt, `${groupAt} ${projectAt} ${personalAt}`);
+
+  const groupSection = layered.prompt.slice(groupAt, projectAt).trimEnd();
+  check('the group section carries the brief and its decision', /Never deploy on a Friday/.test(groupSection) && /Sign images: cosign/.test(groupSection));
+  check('the group section carries its top memory, by importance, within the limit',
+    /Group fact 5/.test(groupSection) && /Group fact 4/.test(groupSection) && !/Group fact 3/.test(groupSection));
+
+  const projectSection = layered.prompt.slice(projectAt, personalAt).trimEnd();
+  check('the recent tail is filtered to the user', /alice-answer/.test(projectSection) && !/bob/.test(projectSection) && !/untagged/.test(projectSection),
+    projectSection.split('## Recent conversation')[1]);
+  check('the project layer is otherwise the same block', projectSection.startsWith(`# Context: ${PROJECT}\n\n## Memory\n- (0.90)`) && layered.sessionMessages.every((m) => m.refs.includes('user:alice')));
+
+  const personalSection = layered.prompt.slice(personalAt);
+  const handoffAt = personalSection.indexOf('## Handoff');
+  const notesAt = personalSection.indexOf('## Notes');
+  check('the handoff leads the personal section, rendered whole', handoffAt > 0 && handoffAt < notesAt && personalSection.includes('Next: move the fake upstream to port 19.'));
+  check('the newest handoff wins over a more important stale one', !/stale handoff/.test(personalSection));
+  check('the rest of the personal thread follows by importance, within the limit', /Makefile over the wrapper/.test(personalSection) && !/mid-way/.test(personalSection));
+
+  check('layers account for every section',
+    layered.layers.group?.scope === GROUP && layered.layers.group.chars === groupSection.length &&
+    layered.layers.project.chars === projectSection.length &&
+    layered.layers.personal?.scope === PERSONAL && layered.layers.personal.chars === personalSection.length && layered.layers.personal.handoff === true,
+    JSON.stringify(layered.layers));
+  check('the whole prompt is the three sections joined by blank lines', layered.prompt === [groupSection, projectSection, personalSection].join('\n\n') && layered.chars === layered.prompt.length);
+
+  // The same request without `user` keeps the untouched project block in the middle.
+  const everyone = await dox.context.assemble({ scope: PROJECT, sessionLimit: 3, group: GROUP, personal: PERSONAL });
+  check('without `user` the project layer equals the single-scope prompt exactly',
+    everyone.prompt.includes(`\n\n${plain.prompt}\n\n`) && everyone.layers.project.chars === plain.prompt.length);
+
+  // Budget: the group section is capped by groupChars, and the memory lines survive the cap.
+  const tight = await dox.context.assemble({ scope: PROJECT, group: GROUP, groupChars: 160, groupMemoryLimit: 1 });
+  check('groupChars caps the group section and keeps the memory lines', tight.layers.group.chars <= 160 && /Group fact 5/.test(tight.prompt), `${tight.layers.group.chars}\n${tight.prompt.slice(0, 200)}`);
+
+  // Empty layers still name themselves, so the reader sees the shape.
+  const empty = await dox.context.assemble({ scope: PROJECT, group: 'nobody', personal: 'nobody.u.x' });
+  check('empty layers render a placeholder', /# Group context: nobody\n\(nothing recorded/.test(empty.prompt) && /# Your thread in nobody\.u\.x\n\(no personal thread/.test(empty.prompt) && empty.layers.personal.handoff === false);
+
+  // Author: written when given, absent otherwise, and round-trips through update.
+  const authored = await dox.memory.create({ content: 'Authored fact.', category: PROJECT, importance: 0.5, tags: [], author: 'alice' });
+  check('memory carries its author', (await dox.memory.get(authored.id))?.author === 'alice');
+  check('memory without an author has none', (await dox.memory.get(handoff.id))?.author === undefined);
+  check('an update keeps the author', (await dox.memory.update(authored.id, { content: 'Authored fact, edited.' }))?.author === 'alice');
+
+  // recentMessages with a user goes through the dialect's JSON-array fragment; both engines must agree.
+  const tail = await dox.sessions.recentMessages(PROJECT, 10, 'bob');
+  check('recentMessages filters by user ref', tail.length === 2 && tail.every((m) => /bob/.test(m.content)));
+
+  await dox.sessions.remove(session.id);
+}
+
 // ---------- vector assertions (only when a provider answers) ----------
 const provider = dox.index.embeddingProvider;
 let reachable = false;

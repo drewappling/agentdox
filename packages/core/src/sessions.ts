@@ -119,14 +119,21 @@ export class SessionService {
     return res.changes > 0;
   }
 
-  /** Latest messages across a scope, oldest-first within the window (for context assembly). */
-  async recentMessages(scope: string, limit = 20): Promise<SessionMessage[]> {
+  /**
+   * Latest messages across a scope, oldest-first within the window (for context assembly).
+   * With `user`, only messages whose refs carry `user:<user>` — one member's own tail of a
+   * shared project conversation. The ref is written by the recorder (the router tags each
+   * turn with the harness id); messages recorded without one belong to nobody in particular
+   * and are left out of a filtered tail.
+   */
+  async recentMessages(scope: string, limit = 20, user?: string): Promise<SessionMessage[]> {
+    const userClause = user ? ` AND ${this.store.sql.jsonArrayHas('m.refs_json')}` : '';
     const rows = await this.store.all<MessageRow>(
       `SELECT m.id, m.role, m.content, m.at, m.refs_json
        FROM messages m JOIN sessions s ON s.id = m.session_id
-       WHERE s.scope = ?
+       WHERE s.scope = ?${userClause}
        ORDER BY m.id DESC LIMIT ?`,
-      [scope, limit],
+      user ? [scope, `user:${user}`, limit] : [scope, limit],
     );
     return rows.reverse().map(toMessage);
   }

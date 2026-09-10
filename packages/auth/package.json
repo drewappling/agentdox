@@ -1,6 +1,6 @@
 {
   "name": "@agentdox/auth",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "OIDC + Personal Access Token verifiers and scope-grant RBAC for agentdox.",
   "license": "MIT",
   "type": "module",
@@ -31,7 +31,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agentdox/types": "^0.2.0",
+    "@agentdox/types": "^0.3.0",
     "jose": "^5.9.6"
   },
   "devDependencies": {

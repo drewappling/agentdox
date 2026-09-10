@@ -1,4 +1,4 @@
-import type { ContextRequest, ContextSlice, Doc, DocPassage, MemoryHit } from '@agentdox/types';
+import type { ContextLayers, ContextRequest, ContextSlice, Doc, DocPassage, MemoryEntry, MemoryHit } from '@agentdox/types';
 import { DocService } from './docs.js';
 import { MemoryService } from './memory.js';
 import { SessionService } from './sessions.js';
@@ -9,6 +9,17 @@ const DEFAULT_MEMORY_LIMIT = 15;
 const DEFAULT_DOCS_LIMIT = 3;
 const DEFAULT_SESSION_LIMIT = 20;
 const DEFAULT_MIN_IMPORTANCE = 0.7;
+/**
+ * Layered context (project memory, phase one). The group layer is the most stable — true across
+ * every project the group works on — so it leads and gets a brief-sized budget; the personal
+ * layer is one member's own thread and trails, led by the handoff note. Neither is rendered
+ * unless asked for, so a single-scope request is unchanged.
+ */
+const DEFAULT_GROUP_CHARS = 4000;
+const DEFAULT_GROUP_MEMORY_LIMIT = 4;
+const DEFAULT_PERSONAL_LIMIT = 6;
+/** The tag that marks a personal scope's handoff note: what was done, what is open, what next. */
+const HANDOFF_TAG = 'handoff';
 /**
  * Share of the session budget reserved for the most recent messages. The rest goes to
  * relevance-ranked older ones. Two thirds keeps a resumable conversation tail intact while
@@ -68,6 +79,9 @@ export interface ProjectBrief {
   decisionLog: DecisionEntry[];
   updatedAt: string;
 }
+
+/** One memory entry as a list line; the layer sections need no scope tag since the heading names it. */
+const memoryLine = (e: MemoryEntry): string => `- (${e.importance.toFixed(2)}) ${e.content}`;
 
 export interface ContextAssemblerDeps {
   memory: MemoryService;
@@ -136,7 +150,9 @@ export class ContextService {
     // whether or not they match. So the budget is split: the newest RECENCY_SHARE of it is the
     // tail of the conversation, and the remainder is filled with relevant older messages.
     const recentCount = query ? Math.max(1, Math.ceil(sessionLimit * RECENCY_SHARE)) : sessionLimit;
-    const recent = await this.deps.sessions.recentMessages(scope, recentCount);
+    // With `user`, the tail is that member's own turns in the shared project; the relevance
+    // arm below stays unfiltered, since a colleague's answer is still the answer.
+    const recent = await this.deps.sessions.recentMessages(scope, recentCount, request.user);
     let sessionMessages = recent;
     if (query && sessionLimit > recentCount) {
       const exclude = new Set(recent.map((m) => m.id).filter((id): id is number => id !== undefined));
@@ -152,7 +168,25 @@ export class ContextService {
     const briefBudget = request.briefChars ?? 0;
     const briefBlock = briefBudget > 0 ? await this.renderBrief(scope, briefBudget) : '';
 
-    const prompt = this.render({ request, memory, docs, passages, sessionMessages, briefBlock });
+    const projectBlock = this.render({ request, memory, docs, passages, sessionMessages, briefBlock });
+
+    // --- Layers: group first (most stable), the project block, the personal thread last. ---
+    // Each optional layer is a self-contained section; with neither requested the prompt IS the
+    // project block, byte for byte, which is what every pre-0.3 caller still gets.
+    const groupBlock = request.group
+      ? await this.renderGroup(request.group, request.groupChars ?? DEFAULT_GROUP_CHARS, request.groupMemoryLimit ?? DEFAULT_GROUP_MEMORY_LIMIT)
+      : null;
+    const personalBlock = request.personal ? await this.renderPersonal(request.personal, request.personalLimit ?? DEFAULT_PERSONAL_LIMIT) : null;
+    const prompt = [groupBlock?.text, projectBlock, personalBlock?.text].filter((b): b is string => !!b).join('\n\n');
+    const layers: ContextLayers = {
+      group: groupBlock && request.group ? { scope: request.group, chars: groupBlock.text.length } : null,
+      project: { chars: projectBlock.length },
+      personal:
+        personalBlock && request.personal
+          ? { scope: request.personal, chars: personalBlock.text.length, handoff: personalBlock.handoff }
+          : null,
+    };
+
     return {
       request,
       assembledAt: new Date().toISOString(),
@@ -163,7 +197,57 @@ export class ContextService {
       prompt,
       chars: prompt.length,
       briefChars: briefBlock.length,
+      layers,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // The group and personal layers.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * `# Group context: <group>`: the group scope's brief (its sections and decisions, within
+   * what is left of the budget once the memory lines are counted) and its top memory entries
+   * by importance. Query-independent, like the project brief, so it caches across turns.
+   */
+  private async renderGroup(group: string, budgetChars: number, memoryLimit: number): Promise<{ text: string }> {
+    const header = `# Group context: ${group}\n`;
+    const entries = memoryLimit > 0 ? await this.deps.memory.list({ category: group, limit: memoryLimit }) : [];
+    const memoryBlock = entries.length ? ['## Memory', ...entries.map(memoryLine)].join('\n') : '';
+    const brief = await this.getBrief(group);
+    // Memory is capped by count and small; the brief takes what remains so a long decision log
+    // cannot push the facts out. The blank line joining the two is counted too.
+    const briefBudget = budgetChars - (memoryBlock ? memoryBlock.length + 2 : 0);
+    const briefText = brief && briefBudget > header.length ? this.renderBriefParts(header, brief, briefBudget) : header.trimEnd();
+    const parts = [briefText, memoryBlock].filter(Boolean);
+    const text = !brief && !memoryBlock ? `${header}(nothing recorded for this group yet)` : parts.join('\n\n');
+    return { text: text.length <= budgetChars ? text : text.slice(0, budgetChars) };
+  }
+
+  /**
+   * `# Your thread in <scope>`: one member's own thread in the project. The handoff note (the
+   * entry tagged `handoff`, newest if there are several) leads and is rendered whole — it is the
+   * one thing a resuming session must not lose the end of — and up to `limit` further entries
+   * follow by importance. Stale handoffs are left out rather than listed as notes.
+   */
+  private async renderPersonal(scope: string, limit: number): Promise<{ text: string; handoff: boolean }> {
+    const handoffs = await this.deps.memory.list({ category: scope, tag: HANDOFF_TAG, limit: 20 });
+    const handoff = handoffs.length ? handoffs.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a)) : null;
+    const pool = limit > 0 ? await this.deps.memory.list({ category: scope, limit: limit + handoffs.length }) : [];
+    const notes = pool.filter((e) => !e.tags.includes(HANDOFF_TAG)).slice(0, limit);
+
+    const lines: string[] = [`# Your thread in ${scope}`];
+    if (handoff) {
+      lines.push(`## Handoff (updated ${handoff.updatedAt})`);
+      lines.push(handoff.content.trim());
+    }
+    if (notes.length) {
+      if (handoff) lines.push('');
+      lines.push('## Notes');
+      for (const e of notes) lines.push(memoryLine(e));
+    }
+    if (!handoff && !notes.length) lines.push('(no personal thread in this project yet)');
+    return { text: lines.join('\n'), handoff: handoff !== null };
   }
 
   /** Assemble + persist a context baseline for a scope (auto-context-update job). */
@@ -333,9 +417,13 @@ export class ContextService {
   private async renderBrief(scope: string, budgetChars: number): Promise<string> {
     const brief = await this.getBrief(scope);
     if (brief === null) return '';
+    return this.renderBriefParts(`# Project brief: ${scope} (updated ${brief.updatedAt})\n`, brief, budgetChars);
+  }
 
+  /** The brief's sections and decision log under `header`, within `budgetChars` (header included). */
+  private renderBriefParts(header: string, brief: ProjectBrief, budgetChars: number): string {
     const section = (label: string, body: string): string => (body.trim() ? `## ${label}\n${body.trim()}\n` : '');
-    const parts: string[] = [`# Project brief: ${scope} (updated ${brief.updatedAt})\n`];
+    const parts: string[] = [header];
 
     for (const key of BRIEF_STATIC_KEYS) {
       const block = section(BRIEF_SECTION_LABEL[key], brief[key] ?? '');

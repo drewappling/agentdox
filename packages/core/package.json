@@ -1,6 +1,6 @@
 {
   "name": "@agentdox/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Storage (SQLite) plus memory/doc/context/session services and hybrid retrieval for agentdox.",
   "license": "MIT",
   "type": "module",
@@ -33,8 +33,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agentdox/auth": "^0.2.0",
-    "@agentdox/types": "^0.2.0",
+    "@agentdox/auth": "^0.3.0",
+    "@agentdox/types": "^0.3.0",
     "pg": "^8.23.0"
   },
   "devDependencies": {

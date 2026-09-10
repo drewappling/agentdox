@@ -98,7 +98,14 @@ export function createMcpServer(dox: AgentDox, principal: Principal | null): Mcp
     async ({ content, category, target, importance, tags }) => {
       const scope = category ?? '';
       if (!can(principal, scope, 'write')) return deny(GROUP_MSG(scope, 'write'));
-      const entry = await dox.memory.create({ content, category, target, importance: importance ?? 0.5, tags: tags ?? [] });
+      const entry = await dox.memory.create({
+        content,
+        category,
+        target,
+        importance: importance ?? 0.5,
+        tags: tags ?? [],
+        ...(principal ? { author: principal.sub } : {}),
+      });
       return ok(`Stored memory ${entry.id}`, entry);
     },
   );

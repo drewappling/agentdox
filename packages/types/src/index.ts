@@ -29,6 +29,8 @@ export interface MemoryEntry {
   updatedAt: string;
   /** Optional provenance, e.g. "user-stated", "inferred", or a session id. */
   source?: string;
+  /** Who wrote it: the authenticated principal's `sub` when there was one. Absent otherwise. */
+  author?: string;
 }
 
 export type MemoryTarget = 'user' | 'memory';
@@ -106,6 +108,34 @@ export interface ContextRequest {
    * that have not asked for it.
    */
   briefChars?: number;
+
+  // ---- Layered context (project memory, phase one) ----
+  // Three layers per turn, rendered most-stable first: group → project → personal. Every field
+  // below is optional and defaults to "not present", so a request carrying only `scope` renders
+  // the single-scope project block exactly as before, byte for byte.
+
+  /**
+   * A scope whose **brief** and top **memory** render FIRST, as `# Group context: <group>`:
+   * what is true across every project the group works on.
+   */
+  group?: string;
+  /** Character budget for the group section. Default 4000. */
+  groupChars?: number;
+  /** Memory entries from the group scope, by importance. Default 4. */
+  groupMemoryLimit?: number;
+  /**
+   * A scope whose **memory** renders LAST, as `# Your thread in <scope>`: one member's own
+   * thread in the project. The entry tagged `handoff` (what was done, what is open, what to do
+   * next) comes first and is rendered whole; the rest follow by importance.
+   */
+  personal?: string;
+  /** Entries from the personal scope, the handoff not counted. Default 6. */
+  personalLimit?: number;
+  /**
+   * In the PROJECT layer, keep only messages whose `refs` include `user:<user>` in the *recent*
+   * conversation tail. Relevance-ranked older turns stay unfiltered. Absent = everyone's.
+   */
+  user?: string;
 }
 
 /** A ranked memory hit. */
@@ -146,6 +176,15 @@ export interface ContextSlice {
   chars: number;
   /** Characters the project brief contributed to `prompt`. 0 when not requested. */
   briefChars: number;
+  /** What each layer contributed to `prompt`; `group` and `personal` are null when not requested. */
+  layers: ContextLayers;
+}
+
+/** Per-layer accounting for an assembled slice. */
+export interface ContextLayers {
+  group: { scope: string; chars: number } | null;
+  project: { chars: number };
+  personal: { scope: string; chars: number; handoff: boolean } | null;
 }
 
 /** Retrieval-index coverage for a scope (or the whole store when unscoped). */

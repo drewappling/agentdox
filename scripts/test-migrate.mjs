@@ -24,7 +24,8 @@ const schema = `agentdox_mig_${Date.now().toString(36)}`;
 // 1. A SQLite store with a little of everything.
 const a = await AgentDox.open(join(dir, 'a.db'));
 await a.projects.ensure({ slug: 'acme', name: 'Acme' });
-const m = await a.memory.create({ content: 'The deploy pipeline signs images with cosign.', category: 'acme', importance: 0.9, tags: ['ci'] });
+const m = await a.memory.create({ content: 'The deploy pipeline signs images with cosign.', category: 'acme', importance: 0.9, tags: ['ci'], author: 'alice' });
+const anon = await a.memory.create({ content: 'Nobody signed this one.', category: 'acme', importance: 0.4, tags: [] });
 const d = await a.docs.create({ slug: 'runbook', title: 'Runbook', scope: 'acme', content: '# Runbook\n\n## Rollback\nRun the rollback job.\n' });
 await a.docs.update(d.id, { content: '# Runbook\n\n## Rollback\nRun the rollback job, then page the on-call.\n' });
 const s = await a.sessions.create({ scope: 'acme', title: 'kickoff' });
@@ -53,6 +54,7 @@ check('replace empties and recopies', r2.total === sourceRows);
 // 3. The Postgres copy serves the same data through the services.
 const b = await AgentDox.open(pgUrl, { ...process.env, AGENTDOX_PG_SCHEMA: schema });
 check('memory search works on the copy without a rebuild', (await b.memory.search('cosign images', { category: 'acme' }))[0]?.entry.id === m.id);
+check('the author column came along', (await b.memory.get(m.id))?.author === 'alice' && (await b.memory.get(anon.id))?.author === undefined);
 check('doc history came along', (await b.docs.history(d.id)).length === 2);
 check('message ids are preserved', (await b.sessions.get(s.id))?.messages[0]?.id === msg1.id);
 check('an appended message gets an id past the copied ones', ((await b.sessions.append(s.id, { role: 'user', content: 'next' }))?.id ?? 0) > (msg1.id ?? 0) + 1);
@@ -70,7 +72,40 @@ check('Postgres → SQLite copies every row (plus the appended message)', r3.tot
 await c.close();
 const cDox = await AgentDox.open(join(dir, 'c.db'));
 check('the SQLite copy searches', (await cDox.memory.search('cosign images', { category: 'acme' }))[0]?.entry.id === m.id);
+check('the author survives the round trip', (await cDox.memory.get(m.id))?.author === 'alice');
 await cDox.close();
+
+// 5. A store that predates the column gets it on open, on both engines.
+{
+  const { DatabaseSync } = await import('node:sqlite');
+  const oldPath = join(dir, 'old.db');
+  const raw = new DatabaseSync(oldPath);
+  raw.exec(`CREATE TABLE memory (id TEXT PRIMARY KEY, content TEXT NOT NULL, category TEXT, target TEXT, importance REAL NOT NULL DEFAULT 0.5,
+    tags_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, source TEXT)`);
+  raw.exec(`INSERT INTO memory (id, content, category, importance, created_at, updated_at) VALUES ('mem_old', 'from before', 'acme', 0.5, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`);
+  raw.close();
+  const upgraded = await AgentDox.open(oldPath);
+  check('SQLite: a pre-0.3 store gains the author column on open', (await upgraded.memory.get('mem_old'))?.content === 'from before' && (await upgraded.memory.get('mem_old'))?.author === undefined);
+  const w = await upgraded.memory.create({ content: 'written after the upgrade', category: 'acme', importance: 0.5, tags: [], author: 'bob' });
+  check('SQLite: and the column is writable', (await upgraded.memory.get(w.id))?.author === 'bob');
+  await upgraded.close();
+
+  const oldSchema = `${schema}_old`;
+  await pg.exec(`CREATE SCHEMA "${oldSchema}"`);
+  await pg.exec(`CREATE TABLE "${oldSchema}".memory (id TEXT PRIMARY KEY, content TEXT NOT NULL, category TEXT, target TEXT, importance DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    tags_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, source TEXT)`);
+  await pg.exec(`INSERT INTO "${oldSchema}".memory (id, content, category, importance, created_at, updated_at) VALUES ('mem_old', 'from before', 'acme', 0.5, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`);
+  const upgradedPg = await AgentDox.open(pgUrl, { ...process.env, AGENTDOX_PG_SCHEMA: oldSchema });
+  check('Postgres: a pre-0.3 store gains the author column on open', (await upgradedPg.memory.get('mem_old'))?.content === 'from before');
+  const w2 = await upgradedPg.memory.create({ content: 'written after the upgrade', category: 'acme', importance: 0.5, tags: [], author: 'bob' });
+  check('Postgres: and the column is writable', (await upgradedPg.memory.get(w2.id))?.author === 'bob');
+  // Reopening must be a no-op, not a failed ALTER.
+  const again = await AgentDox.open(pgUrl, { ...process.env, AGENTDOX_PG_SCHEMA: oldSchema });
+  check('Postgres: reopening an upgraded store is idempotent', (await again.memory.get(w2.id))?.author === 'bob');
+  await again.close();
+  await upgradedPg.close();
+  await pg.exec(`DROP SCHEMA "${oldSchema}" CASCADE`);
+}
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} checks passed`);
 await pg.exec(`DROP SCHEMA "${schema}" CASCADE`);

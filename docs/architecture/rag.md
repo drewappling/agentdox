@@ -197,6 +197,19 @@ scanned on every query (observed once as 1,902 vectors against 1,646 chunks).
 `MemoryService.search`, `DocService.search`, `ContextService.assemble` and `saveSnapshot` are now
 async, since the vector arm has to embed the query.
 
+**Layered context (0.3.0).** `assemble` can render three scopes per turn: a group scope's brief
+and top memory first (`# Group context: <group>`, within `groupChars`), the project block
+unchanged in the middle, and a personal scope last (`# Your thread in <scope>`), led by the
+memory entry tagged `handoff` — rendered whole, never truncated, because the end of a handoff
+note is the part that says what to do next — then its other entries by importance. The order is
+stability: the group layer changes least and sits at the front where a consumer's prompt cache
+holds it. `user` narrows only the *recent* tail of the project conversation to messages carrying
+a `user:<id>` ref (the recorder writes it per turn); the relevance-ranked older turns stay shared,
+since a colleague's answer is still the answer. Every field is optional and a request carrying
+only `scope` produces the pre-0.3 block byte for byte — `scripts/test-retrieval.mjs` pins that
+against a golden string. Memory rows gain a nullable `author` (the principal's `sub`), added to
+existing stores by a guarded `ALTER TABLE` on open, on both engines.
+
 **Two speeds, deliberately.** FTS rows are written synchronously inside the same call that writes
 the memory entry or doc, so a fact is searchable the moment it is stored. Vectors are backfilled
 by the scheduler, never on the write path: embedding calls a model server that can be stopped, and

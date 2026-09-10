@@ -14,6 +14,7 @@ type Row = {
   created_at: string;
   updated_at: string;
   source: string | null;
+  author: string | null;
 };
 
 /**
@@ -59,6 +60,7 @@ export class MemoryService {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       source: row.source ?? undefined,
+      author: row.author ?? undefined,
     };
   }
 
@@ -74,11 +76,12 @@ export class MemoryService {
       ...(input.category ? { category: input.category } : {}),
       ...(input.target ? { target: input.target } : {}),
       ...(input.source ? { source: input.source } : {}),
+      ...(input.author ? { author: input.author } : {}),
     };
     await this.store.tx(async () => {
       await this.store.run(
-        `INSERT INTO memory (id, content, category, target, importance, tags_json, created_at, updated_at, source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO memory (id, content, category, target, importance, tags_json, created_at, updated_at, source, author)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           entry.id,
           entry.content,
@@ -89,6 +92,7 @@ export class MemoryService {
           entry.createdAt,
           entry.updatedAt,
           entry.source ?? null,
+          entry.author ?? null,
         ],
       );
       await this.indexer?.indexMemory(entry);
@@ -114,7 +118,7 @@ export class MemoryService {
     next.importance = clamp01(next.importance);
     await this.store.tx(async () => {
       await this.store.run(
-        `UPDATE memory SET content = ?, category = ?, target = ?, importance = ?, tags_json = ?, updated_at = ?, source = ?
+        `UPDATE memory SET content = ?, category = ?, target = ?, importance = ?, tags_json = ?, updated_at = ?, source = ?, author = ?
          WHERE id = ?`,
         [
           next.content,
@@ -124,6 +128,7 @@ export class MemoryService {
           JSON.stringify(next.tags),
           next.updatedAt,
           next.source ?? null,
+          next.author ?? null,
           next.id,
         ],
       );
